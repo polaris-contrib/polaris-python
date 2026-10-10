@@ -1,0 +1,44 @@
+# Cursor: share rules and skills; keep local workspace notes out of git.
+.cursor
+
+# macOS and IDE. Also listed in the local global ignore; keep them here
+# so clones do not depend on that file.
+.DS_Store
+.idea/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Poetry / setuptools build output
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Tests and type checkers
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# uv lockfile for library development
+uv.lock
+
+# Example verification logs
+examples/**/.logs/
