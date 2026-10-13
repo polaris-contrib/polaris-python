@@ -31,7 +31,7 @@ class EchoHandler(BaseHTTPRequestHandler):
 
 
 async def main() -> None:
-    """Start the HTTP server and maintain its Polaris registration."""
+    """Start the HTTP server and register it; the SDK heartbeats every TTL."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--service", default="polaris-python-demo")
     parser.add_argument("--host", default="127.0.0.1")
@@ -66,11 +66,7 @@ async def main() -> None:
     registered = await provider.async_register_instance(instance)
     logging.info("registered %s/%s at %s:%s", registered.namespace, registered.service, registered.host, registered.port)
     try:
-        while not stop.is_set():
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                await provider.async_heartbeat(registered)
+        await stop.wait()
     finally:
         await provider.async_deregister_instance(registered)
         http_server.shutdown()

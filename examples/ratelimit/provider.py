@@ -52,7 +52,7 @@ class EchoHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    """Start the provider, heartbeat it, and deregister on shutdown."""
+    """Start the provider, register it, and deregister on shutdown."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--service", default="RateLimitEchoServer")
     parser.add_argument("--host", default="127.0.0.1")
@@ -90,28 +90,15 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop_server)
     signal.signal(signal.SIGTERM, stop_server)
     server_thread = threading.Thread(target=server.serve_forever, name="ratelimit-http", daemon=True)
-    heartbeat_thread = threading.Thread(
-        target=_heartbeat_loop,
-        args=(provider, registered, stop),
-        name="ratelimit-heartbeat",
-        daemon=True,
-    )
     server_thread.start()
-    heartbeat_thread.start()
     logging.info("rate-limit provider listening on http://%s:%s/echo", args.host, instance.port)
     try:
         stop.wait()
     finally:
         server.shutdown()
         server_thread.join()
-        heartbeat_thread.join()
         provider.deregister_instance(registered)
         context.destroy()
-
-
-def _heartbeat_loop(provider: ProviderAPI, instance: ServiceInstance, stop: threading.Event) -> None:
-    while not stop.wait(5):
-        provider.heartbeat(instance)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,7 @@ fi
 log_step "create circuit-breaker rule ${RULE_NAME}"
 rule_body="$(SERVICE_NAME="$SERVICE_NAME" NAMESPACE="$NAMESPACE" RULE_NAME="$RULE_NAME" CONSECUTIVE_ERROR="$CONSECUTIVE_ERROR" python3 -c '
 import json, os
-print(json.dumps({
+print(json.dumps([{
     "name": os.environ["RULE_NAME"],
     "namespace": os.environ["NAMESPACE"],
     "enable": True,
@@ -80,7 +80,7 @@ print(json.dumps({
         }],
         "api": {"path": {"value": ""}},
     }],
-}))
+}]))
 ')"
 polaris_api POST "/naming/v1/circuitbreaker/rules" "$rule_body"
 if [[ "$API_HTTP" != "200" ]] || ! polaris_ok; then
@@ -88,6 +88,7 @@ if [[ "$API_HTTP" != "200" ]] || ! polaris_ok; then
     exit 1
 fi
 log_info "circuit-breaker rule created"
+wait_for_discover_rule CIRCUIT_BREAKER "$SERVICE_NAME" "$RULE_NAME" || exit 1
 
 log_step "run client until the circuit opens"
 client_log="${LOG_DIR}/client.log"

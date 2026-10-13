@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+# Response codes from specification ``api/v1/model/code.proto``.
+DATA_NO_CHANGE = 200001
+NO_NEED_UPDATE = 200002
+NOT_FOUND_RESOURCE = 400202
+NOT_FOUND_SERVICE = 400301
+
 
 class PolarisError(Exception):
     """Base SDK error with an optional Polaris response code."""

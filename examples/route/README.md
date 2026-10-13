@@ -55,3 +55,17 @@ bash examples/route/metadata/verify_metadata_route.sh
 bash examples/route/rule/verify_rule_route.sh
 bash examples/route/nearby/verify_nearby_route.sh
 ```
+
+每个子目录有自己的说明、用例和清理脚本：
+
+| Demo | 说明 | 用例 | 清理 |
+| --- | --- | --- | --- |
+| metadata | [metadata/README.md](metadata/README.md) | [metadata/test.md](metadata/test.md) | [metadata/cleanup.sh](metadata/cleanup.sh) |
+| rule | [rule/README.md](rule/README.md) | [rule/test.md](rule/test.md) | [rule/cleanup.sh](rule/cleanup.sh) |
+| nearby | [nearby/README.md](nearby/README.md) | [nearby/test.md](nearby/test.md) | [nearby/cleanup.sh](nearby/cleanup.sh) |
+
+三个 demo 的关系见 [test.md](test.md)。一次清理：
+
+```bash
+bash examples/route/cleanup_all.sh -f
+```

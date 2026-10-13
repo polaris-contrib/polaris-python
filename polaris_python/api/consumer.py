@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Mapping
 
@@ -10,7 +9,7 @@ from polarismesh_specification.api.v1.service_manage import request_pb2, service
 
 from polaris_python.api.context import SDKContext
 from polaris_python.api.provider import _sync_or_coroutine
-from polaris_python.core.error import CircuitOpenError, PolarisError, PolarisTransportError
+from polaris_python.core.error import CircuitOpenError, PolarisError
 from polaris_python.core.instance import (
     PROTOCOL_METADATA,
     RESOURCE_TYPE_METADATA,
@@ -19,6 +18,13 @@ from polaris_python.core.instance import (
 )
 
 logger = logging.getLogger(__name__)
+_DISCOVER_TYPES = (
+    request_pb2.DiscoverRequest.INSTANCE,
+    request_pb2.DiscoverRequest.ROUTING,
+    request_pb2.DiscoverRequest.NEARBY_ROUTE_RULE,
+    request_pb2.DiscoverRequest.RATE_LIMIT,
+    request_pb2.DiscoverRequest.CIRCUIT_BREAKER,
+)
 
 
 class ConsumerAPI:
@@ -47,33 +53,21 @@ class ConsumerAPI:
         query: Mapping[str, str] | None = None,
         caller_ip: str = "",
     ) -> list[ServiceInstance]:
-        """Discover all instances for a service and apply metadata filters."""
+        """Discover all instances for a service and apply metadata filters.
+
+        Served from the local cache. The first call waits for the server;
+        when it is unavailable the last cached or persisted snapshot is used.
+        """
         self._check_available()
+        if not service.strip():
+            raise ValueError("service must not be empty")
         effective_namespace = namespace if namespace is not None else self._context.config.namespace
-        request = self._build_request(effective_namespace, service)
-        cached = await self._context.registry.get_instances(effective_namespace, service)
-        try:
-            await self._context.ensure_discovery(
-                effective_namespace,
-                service,
-                request,
-                wait_for_initial=not cached,
-            )
-            for discover_type in (
-                request_pb2.DiscoverRequest.ROUTING,
-                request_pb2.DiscoverRequest.RATE_LIMIT,
-                request_pb2.DiscoverRequest.CIRCUIT_BREAKER,
-            ):
-                await self._context.ensure_discovery(
-                    effective_namespace,
-                    service,
-                    self._build_request(effective_namespace, service, discover_type),
-                    wait_for_initial=False,
-                )
-        except (asyncio.TimeoutError, PolarisTransportError):
-            if not cached:
-                raise
-            logger.warning("using stale Polaris cache for %s/%s", effective_namespace, service)
+        await self._context.ensure_resources(
+            effective_namespace,
+            service,
+            _DISCOVER_TYPES,
+            required=request_pb2.DiscoverRequest.INSTANCE,
+        )
         instances = await self._context.registry.get_instances(effective_namespace, service)
         filtered = self._filter_instances(
             instances,
@@ -172,23 +166,6 @@ class ConsumerAPI:
         return _sync_or_coroutine(
             self.async_after_call(instance, success=success),
             context=self._context,
-        )
-
-    @staticmethod
-    def _build_request(
-        namespace: str,
-        service: str,
-        discover_type: int = request_pb2.DiscoverRequest.INSTANCE,
-    ) -> request_pb2.DiscoverRequest:
-        if not service.strip():
-            raise ValueError("service must not be empty")
-        return request_pb2.DiscoverRequest(
-            type=discover_type,
-            service=service_pb2.Service(
-                name={"value": service},
-                namespace={"value": namespace},
-            ),
-            Filter={"OnlyHealthyInstance": False},
         )
 
     @staticmethod

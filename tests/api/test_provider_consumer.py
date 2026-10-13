@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
-from polarismesh_specification.api.v1.service_manage import response_pb2, service_pb2
+from google.protobuf.any_pb2 import Any
+from polarismesh_specification.api.v1.service_manage import request_pb2, response_pb2, service_pb2
+from polarismesh_specification.api.v1.traffic_manage import routing_pb2
 
 from polaris_python.api.consumer import ConsumerAPI
 from polaris_python.api.context import SDKContext
@@ -44,6 +48,23 @@ class FakeConnector:
         pass
 
 
+class NearbyConnector(FakeConnector):
+    """Serve instances plus one campus-level rule for ``NEARBY_ROUTE_RULE``."""
+
+    async def discover(self, request: request_pb2.DiscoverRequest) -> AsyncIterator[response_pb2.DiscoverResponse]:
+        if request.type != request_pb2.DiscoverRequest.NEARBY_ROUTE_RULE:
+            async for response in super().discover(request):
+                yield response
+            return
+        packed = Any()
+        packed.Pack(routing_pb2.NearbyRoutingConfig(match_level=1, max_match_level=3))
+        yield response_pb2.DiscoverResponse(
+            code={"value": 200000},
+            type=response_pb2.DiscoverResponse.NEARBY_ROUTE_RULE,
+            nearbyRouteRules=[routing_pb2.RouteRule(enable=True, routing_policy=2, routing_config=packed)],
+        )
+
+
 @pytest.fixture
 def instance() -> ServiceInstance:
     return ServiceInstance(
@@ -72,6 +93,21 @@ async def test_provider_register_deregister_and_heartbeat(instance: ServiceInsta
     assert connector.registered[0].metadata["polaris.protocol"] == "http"
     assert connector.heartbeats[0].namespace.value == "prod"
     assert connector.deregistered[0].service.value == "agent-service"
+    await context.async_destroy()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_is_recorded_on_heartbeat_channel(instance: ServiceInstance, tmp_path: Path) -> None:
+    context = SDKContext(
+        Config(namespace="prod", log_dir=str(tmp_path)),
+        connector=FakeConnector([]),
+        registry=InMemoryRegistry(),
+    )
+
+    await ProviderAPI(context).async_heartbeat(instance)
+
+    text = (tmp_path / "heartbeat" / "polaris-instance-heartbeat.log").read_text(encoding="utf-8")
+    assert "heartbeat prod/agent-service 127.0.0.1:8080 ok" in text
     await context.async_destroy()
 
 
@@ -122,6 +158,41 @@ def test_sync_consumer_facade(instance: ServiceInstance) -> None:
     assert selected.id == "agent-1"
     assert selected_again.id == "agent-1"
     context.destroy()
+
+
+@pytest.mark.asyncio
+async def test_consumer_applies_nearby_rule_from_discovery() -> None:
+    near = ServiceInstance(service="agent-service", namespace="prod", id="near", host="127.0.0.1", port=8081, campus="gz-1")
+    far = ServiceInstance(service="agent-service", namespace="prod", id="far", host="127.0.0.1", port=8082, campus="gz-2")
+    connector = NearbyConnector([far.to_proto(), near.to_proto()])
+    context = SDKContext(Config(namespace="prod"), connector=connector, registry=InMemoryRegistry())
+    consumer = ConsumerAPI(context)
+    location = {"campus": "gz-1"}
+
+    await consumer.async_get_all_instances("agent-service", routing_metadata=location)
+    for _ in range(10):
+        await asyncio.sleep(0)
+    selected = await consumer.async_get_all_instances("agent-service", routing_metadata=location)
+
+    assert [item.id for item in selected] == ["near"]
+    await context.async_destroy()
+
+
+@pytest.mark.asyncio
+async def test_discovery_error_code_is_logged_once(tmp_path: Path) -> None:
+    context = SDKContext(
+        Config(namespace="prod", log_dir=str(tmp_path)),
+        connector=FakeConnector([]),
+        registry=InMemoryRegistry(),
+    )
+    error = response_pb2.DiscoverResponse(code={"value": 400301}, type=response_pb2.DiscoverResponse.INSTANCE)
+
+    await context._apply_discover_response("prod", "missing", response_pb2.DiscoverResponse.INSTANCE, error)
+    await context._apply_discover_response("prod", "missing", response_pb2.DiscoverResponse.INSTANCE, error)
+
+    text = (tmp_path / "base" / "polaris.log").read_text(encoding="utf-8")
+    assert text.count("returned code 400301") == 1
+    await context.async_destroy()
 
 
 @pytest.mark.asyncio

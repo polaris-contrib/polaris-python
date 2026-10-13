@@ -40,5 +40,6 @@ coverage.xml
 # uv lockfile for library development
 uv.lock
 
-# Example verification logs
+# Example verification logs and the SDK's default log directory.
 examples/**/.logs/
+polaris/

@@ -91,8 +91,8 @@ if [[ "$API_HTTP" != "200" ]] || ! polaris_ok; then
     log_error "create routing rule failed http=${API_HTTP} body=${API_BODY}"
     exit 1
 fi
-log_info "routing rule created, waiting for discovery"
-sleep 3
+log_info "routing rule created"
+wait_for_discover_rule ROUTING "$SERVICE_NAME" "$RULE_NAME" || exit 1
 
 log_step "start consumer"
 start_demo consumer examples/route/rule/consumer.py \

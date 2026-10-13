@@ -38,7 +38,7 @@ def run_provider(
     ttl_seconds: int | None = 10,
     title: str = "RouteEchoServer",
 ) -> None:
-    """Register one HTTP provider and keep its heartbeat alive."""
+    """Register one HTTP provider; the SDK heartbeats it every TTL."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = Config.from_env()
     context = APIFactory.create_context(config)
@@ -81,14 +81,7 @@ def run_provider(
     signal.signal(signal.SIGINT, stop_server)
     signal.signal(signal.SIGTERM, stop_server)
     server_thread = threading.Thread(target=server.serve_forever, name="route-http", daemon=True)
-    heartbeat_thread = threading.Thread(
-        target=_heartbeat_loop,
-        args=(provider, registered, stop, ttl_seconds),
-        name="route-heartbeat",
-        daemon=True,
-    )
     server_thread.start()
-    heartbeat_thread.start()
     logging.info("%s listening on http://%s:%s/echo", title, host, instance.port)
     try:
         stop.wait()
@@ -96,7 +89,6 @@ def run_provider(
         server.shutdown()
         server.server_close()
         server_thread.join()
-        heartbeat_thread.join()
         provider.deregister_instance(registered)
         context.destroy()
 
@@ -193,12 +185,6 @@ class _EchoHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         logging.getLogger(__name__).info(format, *args)
-
-
-def _heartbeat_loop(provider: ProviderAPI, instance: ServiceInstance, stop: threading.Event, ttl: int | None) -> None:
-    interval = max(1.0, min(5.0, (ttl or 10) / 2))
-    while not stop.wait(interval):
-        provider.heartbeat(instance)
 
 
 def _call_instance(instance: ServiceInstance, query: str, headers: Mapping[str, str]) -> tuple[bytes, int]:

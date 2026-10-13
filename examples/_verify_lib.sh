@@ -155,6 +155,28 @@ polaris_api() {
     API_BODY="$(cat "$out" 2>/dev/null || true)"
 }
 
+# wait_for_discover_rule TYPE SERVICE RULE_NAME [MAX_WAIT]
+# New rules reach Discover only after the server refreshes its cache.
+wait_for_discover_rule() {
+    local discover_type="$1"
+    local service="$2"
+    local rule_name="$3"
+    local max_wait="${4:-30}"
+    local body="{\"service\":{\"name\":\"${service}\",\"namespace\":\"${NAMESPACE}\"},\"type\":\"${discover_type}\"}"
+    local waited=0
+    while [[ "$waited" -lt "$max_wait" ]]; do
+        polaris_api POST "/v1/Discover" "$body"
+        if [[ "$API_HTTP" == "200" ]] && grep -qF "$rule_name" <<<"$API_BODY"; then
+            log_info "${discover_type} rule ${rule_name} visible in Discover after ${waited}s"
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    log_error "${discover_type} rule ${rule_name} not visible in Discover after ${max_wait}s"
+    return 1
+}
+
 polaris_ok() {
     python3 -c 'import json,sys; data=json.load(sys.stdin); code=data.get("code", 0); raise SystemExit(0 if code in (200000, 200001) else 1)' <<<"$API_BODY"
 }

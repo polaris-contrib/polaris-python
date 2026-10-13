@@ -15,10 +15,18 @@ curl http://127.0.0.1:18080/echo
 python examples/quickstart/consumer_sync.py --service polaris-python-demo
 ```
 
-自动验证（需要本地 Polaris）：
+自动验证（需要本地 Polaris）和用例说明：
 
 ```bash
 bash examples/quickstart/verify_quickstart.sh
+```
+
+用例和通过条件见 [test.md](test.md)。残留进程和 `.logs/`：
+
+```bash
+bash examples/quickstart/cleanup.sh
+bash examples/quickstart/cleanup.sh -f
+bash examples/quickstart/cleanup.sh --dry-run
 ```
 
 Provider 启动时注册 HTTP 端口，退出时反注册；Consumer 通过 Polaris 发现实例，

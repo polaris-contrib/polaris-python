@@ -31,3 +31,13 @@ Polaris 服务端规则。
 ```bash
 bash examples/circuitbreaker/verify_circuitbreaker.sh
 ```
+
+用例和通过条件见 [test.md](test.md)。残留进程和 `.logs/`：
+
+```bash
+bash examples/circuitbreaker/cleanup.sh
+bash examples/circuitbreaker/cleanup.sh -f
+bash examples/circuitbreaker/cleanup.sh --dry-run
+```
+
+`cleanup.sh` 不删除脚本创建的熔断规则。

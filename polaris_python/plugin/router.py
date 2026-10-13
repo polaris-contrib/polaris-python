@@ -24,6 +24,15 @@ _MATCH_TYPE = {
     value.name: value.number
     for value in model_pb2.MatchString.DESCRIPTOR.enum_types_by_name["MatchStringType"].values
 }
+# Label keys the server uses when it converts v2 rule arguments into v1
+# source metadata, e.g. a QUERY argument ``env`` becomes ``$query.env``.
+_LABEL_PREFIXES = (
+    ("$header.", "HEADER"),
+    ("$query.", "QUERY"),
+    ("$cookie.", "COOKIE"),
+    ("$caller_metadata.", "CALLER_METADATA"),
+)
+_LABEL_KEYS = {"$method": "METHOD", "$caller_ip": "CALLER_IP", "$path": "PATH"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +95,7 @@ class MetadataRouter:
 
     def __init__(self, rules: Iterable[RouteRule] = ()) -> None:
         self._rules: list[RouteRule] = list(rules)
+        self._nearby: dict[str, RouteRule] = {}
 
     @property
     def rules(self) -> tuple[RouteRule, ...]:
@@ -106,15 +116,35 @@ class MetadataRouter:
         *,
         context: RoutingContext | None = None,
     ) -> list[ServiceInstance]:
-        """Return instances selected by the highest-priority matching rule."""
+        """Apply the first matching rule route, then the callee's nearby rule."""
         candidates = list(instances)
-        matched = next((rule for rule in self._rules if rule.matches(context or RoutingContext())), None)
-        if matched is None or not matched.destinations:
-            if matched is not None and matched.nearby_match_level is not None:
-                return _route_nearby(candidates, context or RoutingContext(), matched)
-            return candidates
-        if matched.nearby_match_level is not None:
-            return _route_nearby(candidates, context or RoutingContext(), matched)
+        context = context or RoutingContext()
+        matched = next((rule for rule in self._rules if rule.matches(context)), None)
+        if matched is not None and matched.nearby_match_level is not None:
+            return _route_nearby(candidates, context, matched)
+        if matched is not None and matched.destinations:
+            candidates = self._select_destinations(candidates, matched)
+        nearby = self._nearby.get(_service_key(candidates[0])) if candidates else None
+        if nearby is not None:
+            candidates = _route_nearby(candidates, context, nearby)
+        return candidates
+
+    def update_nearby_rules(self, namespace: str, service: str, rules: Iterable[routing_pb2.RouteRule]) -> None:
+        """Replace the nearby rule delivered by ``NEARBY_ROUTE_RULE`` for one service."""
+        imported = [
+            rule
+            for route_rule in rules
+            for rule in _rules_from_route_rule(route_rule)
+            if rule.nearby_match_level is not None
+        ]
+        key = f"{namespace}/{service}"
+        if imported:
+            self._nearby[key] = imported[0]
+        else:
+            self._nearby.pop(key, None)
+
+    @staticmethod
+    def _select_destinations(candidates: list[ServiceInstance], matched: RouteRule) -> list[ServiceInstance]:
         selected: list[ServiceInstance] = []
         destinations = sorted(matched.destinations, key=lambda item: item.priority)
         for destination in destinations:
@@ -132,10 +162,6 @@ class MetadataRouter:
         """Import metadata routing information from the specification message."""
         imported: list[RouteRule] = []
         for route in [*routing.inbounds, *routing.outbounds]:
-            source_metadata: dict[str, str] = {}
-            method: str | None = None
-            for source in route.sources:
-                source_metadata.update({key: _match_value(value) for key, value in source.metadata.items()})
             destinations = tuple(
                 RouteDestination(
                     metadata={key: _match_value(value) for key, value in destination.metadata.items()},
@@ -147,7 +173,9 @@ class MetadataRouter:
                 )
                 for destination in route.destinations
             )
-            imported.append(RouteRule(source_metadata, destinations, priority=0, method=method))
+            for source in route.sources or [None]:
+                arguments = _source_arguments(source.metadata) if source is not None else ()
+                imported.append(RouteRule(destinations=destinations, priority=0, source_arguments=arguments))
         for route_rule in routing.rules:
             imported.extend(_rules_from_route_rule(route_rule))
         self.set_rules(imported)
@@ -203,6 +231,22 @@ def _rules_from_route_rule(route_rule: routing_pb2.RouteRule) -> list[RouteRule]
             )
         )
     return imported
+
+
+def _source_arguments(metadata: Mapping[str, model_pb2.MatchString]) -> tuple[tuple[int, str, str, int], ...]:
+    """Translate v1 source labels such as ``$query.env`` into rule arguments."""
+    arguments: list[tuple[int, str, str, int]] = []
+    for label, value in metadata.items():
+        argument_type, key = _SOURCE_MATCH["CUSTOM"], label
+        if label.lower() in _LABEL_KEYS:
+            argument_type, key = _SOURCE_MATCH[_LABEL_KEYS[label.lower()]], ""
+        else:
+            for prefix, name in _LABEL_PREFIXES:
+                if label.startswith(prefix):
+                    argument_type, key = _SOURCE_MATCH[name], label[len(prefix):]
+                    break
+        arguments.append((argument_type, key, _match_value(value), int(value.type)))
+    return tuple(arguments)
 
 
 def _argument_matches(argument: tuple[int, str, str, int], context: RoutingContext) -> bool:
@@ -261,6 +305,10 @@ def _route_nearby(
         if selected:
             return selected
     return instances
+
+
+def _service_key(instance: ServiceInstance) -> str:
+    return f"{instance.namespace}/{instance.service}"
 
 
 def _instance_location(instance: ServiceInstance, key: str) -> str:

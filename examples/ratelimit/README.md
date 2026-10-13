@@ -25,3 +25,13 @@ checks that a burst receives both `200` and `429`:
 ```bash
 bash examples/ratelimit/verify_ratelimit.sh
 ```
+
+Cases and pass criteria: [test.md](test.md). Leftover processes and `.logs/`:
+
+```bash
+bash examples/ratelimit/cleanup.sh
+bash examples/ratelimit/cleanup.sh -f
+bash examples/ratelimit/cleanup.sh --dry-run
+```
+
+`cleanup.sh` does not delete the rate-limit rule created by the verify script.

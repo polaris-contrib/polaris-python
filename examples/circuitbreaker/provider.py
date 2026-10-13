@@ -99,9 +99,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop_server)
     signal.signal(signal.SIGTERM, stop_server)
     server_thread = threading.Thread(target=server.serve_forever, name="circuitbreaker-http", daemon=True)
-    heartbeat_thread = threading.Thread(target=_heartbeat_loop, args=(provider, registered, stop), daemon=True)
     server_thread.start()
-    heartbeat_thread.start()
     logging.info("circuit-breaker provider listening on http://%s:%s/echo error=%s", args.host, instance.port, args.initial_error)
     try:
         stop.wait()
@@ -109,14 +107,8 @@ def main() -> None:
         server.shutdown()
         server.server_close()
         server_thread.join()
-        heartbeat_thread.join()
         provider.deregister_instance(registered)
         context.destroy()
-
-
-def _heartbeat_loop(provider: ProviderAPI, instance: ServiceInstance, stop: threading.Event) -> None:
-    while not stop.wait(5):
-        provider.heartbeat(instance)
 
 
 if __name__ == "__main__":

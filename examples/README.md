@@ -13,16 +13,15 @@ export POLARIS_TOKEN=
 
 | 目录 | 内容 | 运行方式 |
 | --- | --- | --- |
-| `quickstart/provider.py` | HTTP Provider 注册、心跳、反注册 | `python examples/quickstart/provider.py` |
-| `quickstart/consumer.py` | 异步发现实例并代理 HTTP 请求 | `python examples/quickstart/consumer.py` |
-| `quickstart/consumer_sync.py` | 同步发现实例并调用 HTTP 服务 | `python examples/quickstart/consumer_sync.py` |
-| `route/metadata/` | 元数据路由 provider/consumer | `python examples/route/metadata/consumer.py` |
-| `route/rule/` | 规则路由 provider/consumer | `python examples/route/rule/consumer.py` |
-| `route/nearby/` | 就近路由 provider/consumer | `python examples/route/nearby/consumer.py` |
-| `ratelimit/provider.py` | 注册 Provider 并调用服务端限流配额 | `python examples/ratelimit/provider.py` |
-| `ratelimit/client.py` | 同步发现并调用限流服务 | `python examples/ratelimit/client.py` |
-| `circuitbreaker/provider.py` | 可切换成功/失败响应的 Provider | `python examples/circuitbreaker/provider.py` |
-| `circuitbreaker/client.py` | 同步拉取服务端规则并调用熔断服务 | `python examples/circuitbreaker/client.py` |
+| `quickstart/` | 注册、发现、异步和同步调用 | [quickstart/README.md](quickstart/README.md) |
+| `route/metadata/` | 元数据路由 | [route/metadata/README.md](route/metadata/README.md) |
+| `route/rule/` | 规则路由 | [route/rule/README.md](route/rule/README.md) |
+| `route/nearby/` | 就近路由 | [route/nearby/README.md](route/nearby/README.md) |
+| `ratelimit/` | 服务端 QPS 限流 | [ratelimit/README.md](ratelimit/README.md) |
+| `circuitbreaker/` | 服务端熔断规则 | [circuitbreaker/README.md](circuitbreaker/README.md) |
+
+每个 demo 目录包含 `README.md`、`test.md`、`verify_*.sh` 和 `cleanup.sh`。
+`test.md` 记录自动验证的用例和通过条件。`cleanup.sh` 清理残留进程和 `.logs/`。
 
 先启动 Provider，再启动 Consumer：
 
@@ -58,7 +57,18 @@ bash examples/verify_all.sh
 ```
 
 也可以单独运行，例如 `bash examples/quickstart/verify_quickstart.sh`。地址和令牌用
-`POLARIS_SERVER`、`POLARIS_TOKEN` 覆盖。
+`POLARIS_SERVER`、`POLARIS_TOKEN` 覆盖。用例细节在各目录的 `test.md`。
+
+验证中断或手动启动示例后，按目录清理：
+
+```bash
+bash examples/quickstart/cleanup.sh -f
+bash examples/route/cleanup_all.sh -f
+bash examples/ratelimit/cleanup.sh -f
+bash examples/circuitbreaker/cleanup.sh -f
+```
+
+`cleanup.sh -f` 直接清理，`--dry-run` 只展示。规则路由、就近路由、限流和熔断的自动验证会在服务端留下规则，清理脚本不删除这些规则。
 
 ## E2E 测试
 

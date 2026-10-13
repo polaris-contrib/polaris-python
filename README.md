@@ -144,7 +144,6 @@ config = Config(
     server_addresses=["127.0.0.1:8091"],
     namespace="default",
     token="your-token",
-    cache_file="~/.cache/polaris-python/instances.json",
 )
 context = SDKContext(config)
 provider = ProviderAPI(context)
@@ -164,12 +163,69 @@ instance = ServiceInstance(
 # Sync code:  provider.register_instance(instance)
 ```
 
+`register_instance` 成功后，SDK 按实例的 `ttl_seconds`（不填时为 5 秒）定期发心跳，
+`deregister_instance` 和 `SDKContext.destroy()` 会停止心跳。心跳连续两次返回 `400202`
+（资源不存在），并且距首次注册已超过 `min_register_interval_seconds`（默认 30 秒）时，
+SDK 重新注册该实例，多次失败时退避，最长间隔 60 秒。`enable_health_check=False` 的实例
+不发心跳。`heartbeat()` 仍可手动调用。
+
 `ConsumerAPI` 提供 `async_get_all_instances`、`async_get_healthy_instances` 和
-`async_get_one_instance`，以及对应的同步包装。发现结果会先读本地缓存，再通过
-`Discover(INSTANCE)` 长连接异步更新；`isolate=true` 的实例默认不会被返回。
+`async_get_one_instance`，以及对应的同步包装。`isolate=true` 的实例默认不会被返回。
 
 配置也支持 `Config.from_env()`（如 `POLARIS_SERVER_ADDRESSES`、
-`POLARIS_NAMESPACE`、`POLARIS_TOKEN`）和 JSON/TOML 文件。
+`POLARIS_NAMESPACE`、`POLARIS_TOKEN`）和 JSON/TOML 文件。`token` 放在 gRPC 请求头
+`x-polaris-token` 里，与 Java、Go 一致；每个请求还带 Java 同样规则的 `request-id`。
+
+## 客户端上报
+
+与 polaris-java `SDKContext.reportClient` 一致：`SDKContext` 每 60 秒调用一次
+`ReportClient`，上报本机地址、SDK 版本和客户端 ID（`<主机名>_<进程号>_<序号>`）。失败只记
+`base/polaris.log`，下个周期再报。本机地址依次取 `bind_ip`（`POLARIS_BIND_IP`）、连接第一个
+服务端地址时的本地地址、`127.0.0.1`，只解析一次。`report_enable=False`
+（`POLARIS_REPORT_ENABLE=0`）关闭上报。
+
+在事件循环里创建的 `SDKContext` 立即开始上报；在同步代码里创建的，从第一次调用注册或发现
+接口时开始。服务端返回的地域只记在 debug 日志里，就近路由仍用调用方传入的位置。
+
+## 本地缓存与降级
+
+实例和 `ROUTING`、`NEARBY_ROUTE_RULE`、`RATE_LIMIT`、`CIRCUIT_BREAKER` 规则按
+「命名空间 + 服务 + 资源类型」缓存在本地，调用只读本地缓存。
+
+- 更新：每个资源一条 `Discover` 流，每 `refresh_interval_seconds`（默认 2 秒）带上次的
+  revision 重发。revision 不变时不更新缓存，也不重新应用规则。
+- 首次访问：所有资源并发等待服务端第一份快照，最多 `timeout_seconds`。
+- 降级：服务端没有响应或返回错误时，继续使用内存中的旧快照；内存中没有时，从
+  `persist_dir` 恢复上次落盘的快照，规则会一并生效。降级过的资源之后不再等待，
+  后台流恢复后自动替换为服务端数据。两者都没有时抛 `PolarisTransportError`。
+- 磁盘备份：默认写到 `./polaris/backup`（`POLARIS_PERSIST_DIR`），每次快照变化写一个文件
+  `svc#<namespace>#<service>#<type>.json`。`persist_dir=""` 只缓存在内存。写盘由一个后台
+  线程按顺序完成，不阻塞发现；每次写持有同名 `.lock` 文件，失败重试
+  `persist_max_write_retry` 次（默认 1），间隔 `persist_retry_interval_seconds`（默认 0.5 秒）。
+- 服务不存在（`400301`，或资源不存在 `400202`）：删除该资源的内存缓存和文件，与 Java 一致。
+- 空闲淘汰：`service_expire_enable=True`（`POLARIS_SERVICE_EXPIRE_ENABLE=1`）时，每隔
+  `service_expire_seconds`（默认 24 小时）检查一次。超过这个时长没有被 `ConsumerAPI`
+  读过的服务停止发现，内存缓存和磁盘文件一起删除；再次读取时重新发现。默认关闭，与 Java 一致。
+- 零实例保护：`zero_protection=True`（或 `POLARIS_ZERO_PROTECTION=1`）时，服务端返回空实例
+  列表会保留原有实例。默认关闭。
+
+## 日志
+
+SDK 使用自己的 logger，不进入应用的 `logging` 配置。创建 `SDKContext` 后，日志写到
+`log_dir`（默认 `./polaris/log`，可用 `POLARIS_LOG_DIR` 覆盖），按 polaris-go 的通道分子目录。
+`log_dir=""` 时不写文件，这些记录也不会传给应用。级别默认 `INFO`（`POLARIS_LOG_LEVEL`）。
+单个文件超过 `log_max_bytes`（默认 50MB）后切分，保留 `log_backup_count`（默认 5）份。
+
+| 路径 | logger | 内容 |
+| --- | --- | --- |
+| `base/polaris.log` | `polaris_python` | 上下文创建与销毁、注册与反注册、发现错误、降级 |
+| `network/polaris-network.log` | `polaris_python.network` | gRPC 重连与重试 |
+| `cache/polaris-cache.log` | `polaris_python.cache` | 快照变化（revision、数量、server / file）和缓存读写失败 |
+| `circuitbreaker/polaris-circuitbreaker.log` | `polaris_python.circuitbreaker` | 熔断状态切换 |
+| `heartbeat/polaris-instance-heartbeat.log` | `polaris_python.heartbeat` | 每次心跳结果 |
+
+日志配置是进程级的，以最后创建的 `SDKContext` 为准。多个进程不要共用同一个 `log_dir`，
+标准库的切分不支持多进程同时写一个文件。`Config` 的 `repr` 不包含 `token`。
 
 ## 治理插件
 

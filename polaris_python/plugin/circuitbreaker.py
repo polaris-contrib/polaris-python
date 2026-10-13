@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ from typing import Iterable
 from polarismesh_specification.api.v1.fault_tolerance import circuitbreaker_pb2
 
 from polaris_python.core.error import CircuitOpenError
+from polaris_python.core.log import CIRCUIT_BREAKER_LOGGER
+
+circuit_log = logging.getLogger(CIRCUIT_BREAKER_LOGGER)
 
 
 class CircuitState(str, Enum):
@@ -84,7 +88,7 @@ class CircuitBreaker:
             if circuit.state == CircuitState.OPEN:
                 if now - circuit.opened_at < rule.recovery_timeout_seconds:
                     return False
-                circuit.state = CircuitState.HALF_OPEN
+                _transition(key, circuit, CircuitState.HALF_OPEN)
                 circuit.half_open_probes = 0
                 circuit.half_open_successes = 0
             if circuit.state == CircuitState.HALF_OPEN:
@@ -123,9 +127,9 @@ class CircuitBreaker:
             if circuit.state == CircuitState.HALF_OPEN:
                 circuit.half_open_successes += 1
                 if circuit.half_open_successes >= rule.success_threshold:
-                    circuit.state = CircuitState.CLOSED
+                    _transition(key, circuit, CircuitState.CLOSED)
                     circuit.half_open_probes = 0
-            
+
     def record_failure(self, key: str) -> None:
         """Record a failed call and open the circuit when the policy triggers."""
         with self._lock:
@@ -146,7 +150,7 @@ class CircuitBreaker:
                     and error_rate >= rule.error_rate_threshold
                 )
             ):
-                circuit.state = CircuitState.OPEN
+                _transition(key, circuit, CircuitState.OPEN)
                 circuit.opened_at = time.monotonic()
 
     def record(self, key: str, *, success: bool) -> None:
@@ -182,4 +186,19 @@ class CircuitBreaker:
                 )
             )
         self.set_rules(rules)
+
+
+def _transition(key: str, circuit: _Circuit, state: CircuitState) -> None:
+    """Change a circuit state and record it on the circuit-breaker channel."""
+    if circuit.state == state:
+        return
+    circuit_log.info(
+        "%s %s -> %s consecutive_failures=%d samples=%d",
+        key,
+        circuit.state.value,
+        state.value,
+        circuit.consecutive_failures,
+        len(circuit.samples),
+    )
+    circuit.state = state
 
