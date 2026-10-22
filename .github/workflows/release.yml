@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - name: Verify lockfile
+        run: uv lock --check
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          package_version="$(python3 - <<'PY'
+          from pathlib import Path
+
+          namespace = {}
+          exec(Path("src/polaris/_version.py").read_text(encoding="utf-8"), namespace)
+          print(namespace["__version__"])
+          PY
+          )"
+          tag_version="${RELEASE_TAG#v}"
+          tag_version="${tag_version#polaris-python==}"
+          if [[ "$tag_version" != "$package_version" ]]; then
+            echo "Release tag '$RELEASE_TAG' does not match package version '$package_version'." >&2
+            exit 1
+          fi
+          echo "Releasing polaris-python $package_version"
+      - name: Build distributions
+        run: uv build
+      - name: Create clean wheel environment
+        run: uv venv "$RUNNER_TEMP/polaris-release-venv" --python 3.12
+      - name: Install wheel with dependencies
+        run: |
+          uv pip install --python "$RUNNER_TEMP/polaris-release-venv/bin/python" \
+            dist/*.whl \
+            "pytest>=8.3,<9" \
+            "pytest-asyncio>=0.24,<0.25"
+      - name: Verify installed distribution
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/polaris-release-venv/bin/python" - <<'PY'
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          import polaris
+          from polaris import Configuration
+
+          assert version("polaris-python") == polaris.__version__
+          assert Path(polaris.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+
+          config = Configuration()
+          config.set_default()
+          assert config.get_global().get_server_connector().get_protocol() == "grpc"
+          print(f"verified polaris-python {polaris.__version__} from {polaris.__file__}")
+          PY
+      - name: Run tests against installed wheel
+        run: |
+          "$RUNNER_TEMP/polaris-release-venv/bin/python" -m pytest tests -q -m "not e2e"
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: polaris-python-release-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: Release
+    permissions:
+      contents: read
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: polaris-python-release-dist
+          path: dist/
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/
+          print-hash: true

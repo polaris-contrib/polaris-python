@@ -37,9 +37,17 @@ coverage.xml
 .env.*
 !.env.example
 
-# uv lockfile for library development
-uv.lock
-
-# Example verification logs and the SDK's default log directory.
+# Example verification logs and SDK runtime artifacts.
+.polaris/
 examples/**/.logs/
-polaris/
+examples/**/.runtime/
+examples/**/.build/
+examples/**/bin
+examples/**/x86-bin
+polaris.log
+polaris-*.log
+/polaris
+.polaris_multicontext/
+.polaris_cache/
+
+uv.lock

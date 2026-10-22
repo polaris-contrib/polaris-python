@@ -1,14 +1,37 @@
 [project]
 name = "polaris-python"
-version = "0.1.0"
-description = ""
+dynamic = ["version"]
+description = "Python SDK for Polaris service governance."
 readme = "README.md"
+license = "BSD-3-Clause"
 authors = [{ name = "evelynwei", email = "evelynwei@tencent.com" }]
+keywords = ["polaris", "service-governance", "service-discovery", "service-mesh", "grpc"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
 requires-python = ">=3.12"
 dependencies = [
     "grpcio>=1.84.0",
-    "polarismesh-specification @ git+https://github.com/polarismesh/specification.git@v1.9.0-alpha.1#subdirectory=source/python",
+    "protobuf>=7.35.1,<8",
+    "polarismesh-specification==1.9.0.dev4",
+    "PyYAML>=6.0.2,<7",
+    "psutil>=7.0,<8",
+    "prometheus-client>=0.21,<1",
+    "aiohttp>=3.11,<4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/polaris-contrib/polaris-python"
+Repository = "https://github.com/polaris-contrib/polaris-python"
+Issues = "https://github.com/polaris-contrib/polaris-python/issues"
+Documentation = "https://github.com/polaris-contrib/polaris-python#readme"
 
 [dependency-groups]
 dev = [
@@ -17,11 +40,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build.targets.wheel]
-packages = ["polaris_python"]
+[tool.setuptools]
+packages = { find = { where = ["src"] } }
+
+[tool.setuptools.dynamic]
+version = { attr = "polaris._version.__version__" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

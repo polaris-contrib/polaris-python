@@ -1,242 +1,322 @@
 # Polaris Python SDK
 
-Polaris Python SDK 是 AI 注册中心的 Python 客户端，供 Python AI 应用完成 Agent、MCP Server 与 Skill 的注册、发现、生命周期管理和治理。
+[中文](README-zh.md)
 
-能力范围包含两类：与 Java SDK 已落地能力对齐的存量能力，以及 AI 注册中心规划中的新能力。当前版本 `0.1.0`，第一期已提供基础框架和服务实例注册发现能力，治理插件也已接入本地调用链。
+Polaris Python SDK is a Python client for Polaris service governance. It talks to
+Polaris over gRPC and uses the protocol stubs from
+[`polarismesh-specification`](https://github.com/polarismesh/specification).
 
-要求 Python 3.12+，使用 [uv](https://docs.astral.sh/uv/) 管理依赖。本地安装：
+The distribution name is `polaris-python`. The import package is `polaris`.
+
+MCP registration/discovery and read-only published Skill APIs are described in
+[AI registry APIs](docs/ai-registry.md). MCP servers reuse the ordinary `Instance`
+cache; Skill RPCs have an independent connection and persistent network-error fallback.
+Ordinary A2A metadata is demonstrated in [examples/a2a](examples/a2a/README.md).
+[Observability](docs/observability.md) supports invocation reporting and Prometheus
+pull / Pushgateway push. Registry and Skill transports independently support [TLS](docs/tls.md).
+
+## Requirements
+
+- Python 3.12 or newer
+- `grpcio>=1.84.0`
+- `protobuf>=7.35.1,<8`
+- `polarismesh-specification==1.9.0.dev4`
+- `PyYAML>=6.0.2,<7`
+
+This repository does not vendor `.proto` files or generated `*_pb2.py` modules.
+Those come from `polarismesh-specification`.
+
+## Install
+
+From a checkout of this repository:
 
 ```bash
-uv sync
+uv sync --group dev --locked
+uv run pytest
 ```
 
-同步接口与 `asyncio` 接口会成对提供，以适配主流 Python AI 框架的异步模型。
+This project uses a `src` layout. Run `uv sync` first to install `src/polaris/`
+as an editable package in the project environment; source edits then take effect
+immediately. Applications continue to use `import polaris`.
 
-## 协议
+## Layout
 
-客户端与注册中心的接口以 [polarismesh/specification](https://github.com/polarismesh/specification) 中的 protobuf 为准，源文件在该仓库的 `api/v1`。Python 桩代码由其中的 `source/python` 生成，本仓库通过依赖 `polarismesh-specification` 使用这些桩，不在本仓库内重复定义协议。
+```text
+src/polaris/
+├── api/                 # SDKContext, ProviderAPI, ConsumerAPI
+├── pkg/
+│   ├── common/          # shared plugin conventions
+│   ├── config/          # Configuration, defaults, YAML and environment loading
+│   ├── flow/            # engine and call flow
+│   ├── model/           # requests, responses, instances, rules, and errors
+│   └── version/         # SDK version
+├── plugin/
+│   ├── circuit_breaker/  # circuit breaking contract and implementation
+│   ├── load_balancer/    # load balancing contract and implementations
+│   ├── local_registry/   # in-memory and file cache registry
+│   ├── server_connector/ # gRPC connector
+│   └── service_router/   # service routing
+└── plugin_manager.py
+```
 
-与本 SDK 直接相关的协议包括：
+SDK defaults match Go: logs use `./polaris/log/` and backups use `./polaris/backup/`,
+relative to the current working directory. Pytest runs each test in a system temporary
+directory, where relative default files are retained. Demo logs remain in their own
+`.logs/` directories. Test and demo runtime files are isolated from source files.
+Source files live in `src/polaris/`. When run from the repository root,
+the default `polaris/log/` and `polaris/backup/` paths are separate from source files.
+The source package remains `polaris`, imported with `import polaris`.
 
-| 目录 | 内容 |
+Applications run from the source checkout can explicitly set
+`LogOptions(log_dir="./.polaris/log")` and
+`config.get_consumer().get_local_cache().persist_dir = "./.polaris/backup"`.
+These are application-specific paths; SDK defaults continue to follow Go semantics.
+
+## SDK context
+
+A process can create more than one `SDKContext`. Each context owns a unique
+client ID, a startup copy of its configuration, plugin instances and subscriptions,
+connections, caches, rules, background tasks, and logging. Create the APIs from
+one context when they should share that client. Destroying one context does not
+close another context's resources, even when both connect to the same endpoint.
+
+`create_provider_by_config()`, `create_consumer_by_config()`, and
+`create_skill_by_config()` each create a new context. Call `context.destroy()`
+when the client is no longer needed. `ConsumerAPI.destroy()` destroys the
+context it holds. After `destroy()`, later API calls raise `SDKError`.
+
+Other entry points:
+
+- `init_context()` loads the default YAML file, or environment variables when no file is found.
+- `init_context_by_file(path)` loads one YAML file.
+- `init_context_by_stream(text)` loads YAML text or bytes.
+- `create_*_by_file(path)` and `create_*_by_default_config_file()` build an API from those sources.
+
+## Configuration
+
+Timeouts set in Python are milliseconds. A YAML file may use duration strings
+such as `1000ms` or `3s`. The connector protocol defaults to `grpc`, and the
+built-in server address is `127.0.0.1:8091`.
+
+See [`docs/config/polaris.yaml`](docs/config/polaris.yaml) for the complete
+annotated configuration, defaults, and current implementation limitations.
+See [environment variables and precedence](docs/config/environment-variables.md)
+for the full variable list, alias priority, entry-point behavior, and independent logging options.
+[`examples/sdkconfig/file/polaris.yaml`](examples/sdkconfig/file/polaris.yaml)
+remains the minimal startup example; the reference is not auto-loaded.
+
+Configuration structure follows the Java and Go SDKs. `discoverCluster`,
+`healthCheckCluster`, and `monitorCluster` are direct children of `global.system`,
+without a `serverClusters` wrapper. Code uses `system.discover_cluster`,
+`system.health_check_cluster`, and `system.monitor_cluster`.
+Discover and heartbeat clusters are resolved through bootstrap discovery when
+configured; push metrics without an explicit address use `monitorCluster`.
+`serverConnector.serverSwitchInterval` periodically rotates multiple server
+addresses and rebuilds affected discovery streams.
+Defaults follow the Go SDK's `pkg/config` implementation where Java and Go
+differ: API retries `1`, client reporting `60s`, service refresh `2s`, connect
+timeout `500ms`, message timeout `1500ms`, and circuit checks `10s`.
+Active health detection is a P2 capability and is not supported.
+Namespaces belong to register/discovery requests, not the root SDK configuration.
+The internal Python SDK is an implementation reference, not the compatibility standard.
+
+`Configuration.from_file()` applies `POLARIS_` environment variables on top of
+the file. Pass `apply_env=False` to keep the file values. `Configuration.from_env()`
+uses environment variables alone.
+
+The Go provider configuration format is supported. With a `${POLARIS_SERVER}`
+placeholder in an address, `POLARIS_SERVER` contains only the hostname or IP;
+the port stays in the YAML file. `POLARIS_SERVER_ADDRESS` and
+`POLARIS_SERVER_ADDRESSES` always override with complete `host:port` endpoints.
+Without the placeholder, `POLARIS_SERVER` also accepts complete endpoints.
+Overrides preserve other fields in the file. `${ENV}` placeholders expand unset
+or empty variables to empty strings. `${ENV:default}` placeholders use the
+variable when it is set to a non-empty value and use `default` when it is unset
+or empty; the default may contain colons, as in
+`${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}`.
+
+For code-only setup, create `Configuration()`, call `set_default()`, and assign
+the fields on its nested configuration objects. `init_context_by_config()` and
+`create_*_by_config()` copy that object without reading files or automatically
+applying environment variables. All file configuration fields are also
+available as Python object fields; durations in Python are integer milliseconds.
+
+Only `.yaml` files are accepted. The default lookup order is:
+
+1. The file named by `POLARIS_CONFIG_FILE`.
+2. `./polaris.yaml`.
+3. `~/.config/polaris/polaris.yaml`.
+
+Common environment variables:
+
+| Variable | Effect |
 | --- | --- |
-| `api/v1/service_manage` | 服务、实例、心跳与发现，Agent / MCP 的注册和探活复用这套接口 |
-| `api/v1/model` | 命名空间、公共模型与错误码 |
-| `api/v1/security` | 访问注册中心的鉴权 |
-| `api/v1/skill_manage` | Skill 资源模型，以及客户端只读服务 `PolarisSkill` |
+| `POLARIS_SERVER` | Host for `${POLARIS_SERVER}:8091`; complete gRPC address otherwise |
+| `POLARIS_SERVER_ADDRESSES` | Comma-separated gRPC addresses |
+| `POLARIS_TOKEN` | Access token |
+| `POLARIS_PROTOCOL` | Connector protocol |
+| `POLARIS_TIMEOUT` | API timeout in milliseconds |
+| `POLARIS_MAX_RETRY_TIMES` | API retry count |
+| `POLARIS_RETRY_INTERVAL` | Retry interval in milliseconds |
+| `POLARIS_CACHE_PERSIST_DIR` | Local cache directory |
+| `POLARIS_SERVICE_REFRESH_INTERVAL` | Service refresh interval in milliseconds |
+| `POLARIS_STAT_REPORTER_ENABLE` | Enable the stat reporter |
 
-`PolarisSkill` 当前暴露三个只读接口：
+`POLARIS_SERVER_ADDRESS`, `POLARIS_API_TIMEOUT`, `POLARIS_API_MAX_RETRY_TIMES`,
+`POLARIS_API_RETRY_INTERVAL`, and `POLARIS_LOCAL_CACHE_PERSIST_DIR` are accepted
+aliases.
 
-- `GetSkill`：按名称、命名空间获取指定版本；版本为空时返回当前 active 版本，仅 published。
-- `GetSkillList`：按命名空间、标签、关键词等查询 published Skill。
-- `DownloadSkill`：下载 Skill。`markdown` 一次返回正文，`zip` 按分片流式返回。
-
-## SDK 基础框架
-
-公共基础能力，优先级 P1。
-
-| 能力 | 说明 |
-| --- | --- |
-| 工程脚手架与发布 | 项目结构、依赖管理、打包发布（PyPI / 内部源）、CI 流水线、版本规范 |
-| 配置 | 配置文件、代码、环境变量多种来源，覆盖服务端地址、命名空间、超时等 |
-| 服务端通信 | 与注册中心的 gRPC / HTTP 通信、连接管理、超时重试、服务端地址发现与切换 |
-| 本地缓存与变更监听 | 服务、Tool、Skill 数据的本地缓存；长轮询或推送变更监听；磁盘持久化容灾 |
-| 同步 / 异步双 API | `sync` 与 `asyncio` 两套接口 |
-| 鉴权 | 访问注册中心的 Token / AK-SK 鉴权 |
-| 日志、异常与错误码 | 统一日志、异常体系与错误码 |
-| 测试与文档 | 单元测试、集成测试、使用文档与 Quick Start 示例 |
-
-## Agent 管理
-
-### 存量能力对齐
-
-与 Java SDK 已实现能力对齐，优先级 P1。
-
-- **服务注册 / 反注册**：注册 Agent 服务及元数据（地址、版本、能力声明），退出时反注册。
-- **心跳与健康上报**：实例心跳续约，配合服务端探活实现异常下线、恢复上线。
-- **发现与实例过滤**：按服务名、命名空间查询 Agent 实例，支持按健康状态、协议、版本等属性过滤。
-- **AgentCard**：获取 A2A 格式 AgentCard，包含挂载的 Skill 列表。
-- **Skill 挂载加载**：获取 Agent 挂载的 Skill 及绑定版本，并下载加载。
-- **命名空间隔离**：按命名空间注册、发现 Agent。
-- **AgentScope 集成**：对接 AgentScope，自动完成注册与发现。
-
-### 规划能力
-
-- **注册与服务管理**（P1）：注册时自动生成或更新 AgentCard，并提供标准发现接口；支持流式传输、推送通知、状态历史等输入输出模式配置。
-- **语义搜索**（P2）：关键词与语义混合检索，按能力、标签、协议、团队等维度发现 Agent。
-- **生命周期**（P1）：Draft → Approve → Publish 审批流的客户端接口与状态感知；废弃 Agent 安全下线，发现时过滤已下线实例；预置客服、代码审查、RAG 等模板，从模板创建 Agent。
-- **Skill 挂载灰度**（P1）：Agent 加载 Skill 时按灰度规则选择版本。
-- **治理**（P2）：按版本灰度路由；Bearer / API Key 鉴权；访问限流；实例异常自动熔断，恢复后自动接入。
-- **可观测**（P1）：采集并上报请求量、成功率、延迟等调用指标。
-- **身份与认证**（P2）：
-  - 为 Agent 分配独立身份凭证（Agent-as-Principal）。
-  - OAuth 2.0 / OIDC，支持 OBO 委派流。
-  - 短时效 JWT，内嵌 Agent ID 与用户 ID。
-  - RFC 8693 Token 交换，支持多跳委派的链式交换。
-  - 多跳调用后保留完整委托链，调用链路可追溯。
-  - API Key 签发、轮换、吊销。
-  - Agent 间 mTLS 双向证书认证。
-  - Federated Identity（FIC）：通过托管身份获取云凭证。
-- **访问控制与授权**（P2）：
-  - RBAC，按角色控制 Agent、工具、模型的使用权限。
-  - 按 scope / tool name 白名单控制可调用的 MCP Tool 与 API。
-  - 默认无权限，仅授予最小能力集。
-  - 按调用上下文动态调整权限。
-  - 敏感操作的人机协同审批（HITL）。
-  - 访问策略代码化定义，并纳入版本控制。
-
-## MCP 管理
-
-### 存量能力对齐
-
-与 Java SDK 已实现能力对齐，优先级 P1。
-
-- **注册 / 反注册**：将 Python MCP Server 注册到注册中心，统一纳管服务发现与健康检查。
-- **心跳与健康上报**：实例心跳续约，异常下线后恢复接入。
-- **发现与端点**：查询 MCP 服务及实例（过滤隔离实例），获取统一访问端点。
-- **Tools 查询与变更监听**：获取已启用 Tool 的名称、描述、参数；启用、禁用、编辑后实时感知。
-- **版本**：按版本获取 MCP Server 配置。
-- **命名空间隔离**：按命名空间注册、发现 MCP 服务。
-- **官方 MCP Python SDK 集成**：对接 FastMCP，自动注册与发现。
-
-### 规划能力
-
-- **可观测**（P1）：采集并上报各 Tool 的调用频次与成功率，形成 Top Tool 统计。
-- **安全传输**（P2）：
-  - mTLS 双向认证，证书到期预警。
-  - Tool 定义签名，运行时校验完整性。
-  - 长期凭证置换为短期临时令牌。
-  - 获取 Tool 安全风险评估结果，并标记高风险 Tool。
-
-## Skill 管理
-
-存量能力对齐，优先级 P1。
-
-- **查询与搜索**：按命名空间、标签、关键词查询在线 Skill。
-- **下载与缓存**：下载 ZIP 包并解压，本地缓存与更新。
-- **按版本获取**：指定版本拉取 Skill，配合 Agent 关联版本。
-- **创建 / 上传**：通过 SDK 创建 Skill，或上传包含 `SKILL.md` 的 ZIP 包。
-- **上线 / 下线**：草稿、在线、离线状态管理。
-- **业务标签**：按 Tags 筛选 Skill。
-- **SkillHub**：市场浏览，以及 Skill 的发布与下架。
-
-## 目录
-
-对齐 polaris-java 的分层，并将路由、负载均衡、限流、熔断等治理能力放在
-`plugin/` 中，由 `SDKContext` 统一装配。
-
-```
-polaris_python/
-  api/          # SDKContext、ProviderAPI、ConsumerAPI、SkillAPI
-  core/         # Config、PolarisError
-  plugin/       # ServerConnector、LocalRegistry 抽象；实现放 plugin/grpc、plugin/registry
-tests/
-```
-
-## 第一期 Quick Start
+Logging is independent of SDK YAML. Every context has its own category files and level;
+all context and API creation entry points accept keyword-only `log_options`:
 
 ```python
-from polaris_python import Config, SDKContext, ServiceInstance
-from polaris_python.api.consumer import ConsumerAPI
-from polaris_python.api.provider import ProviderAPI
+from polaris import Configuration, LogOptions, init_context_by_config
 
-config = Config(
-    server_addresses=["127.0.0.1:8091"],
-    namespace="default",
-    token="your-token",
+context = init_context_by_config(
+    Configuration(), log_options=LogOptions(level="warn", log_dir="./logs/client-a")
 )
-context = SDKContext(config)
-provider = ProviderAPI(context)
-consumer = ConsumerAPI(context)
-
-instance = ServiceInstance(
-    service="my-agent",
-    host="127.0.0.1",
-    port=8080,
-    resource_type="agent",
-    protocol="http",
-    version="v1",
-    metadata={"team": "ai"},
-)
-
-# Async code: await provider.async_register_instance(instance)
-# Sync code:  provider.register_instance(instance)
+try:
+    print(context.get_client_id())
+finally:
+    context.destroy()
 ```
 
-`register_instance` 成功后，SDK 按实例的 `ttl_seconds`（不填时为 5 秒）定期发心跳，
-`deregister_instance` 和 `SDKContext.destroy()` 会停止心跳。心跳连续两次返回 `400202`
-（资源不存在），并且距首次注册已超过 `min_register_interval_seconds`（默认 30 秒）时，
-SDK 重新注册该实例，多次失败时退避，最长间隔 60 秒。`enable_health_check=False` 的实例
-不发心跳。`heartbeat()` 仍可手动调用。
+Unspecified options capture `POLARIS_LOG_LEVEL` / `POLARIS_LOG_PATH` at creation.
+The default level is `info`; logs use the same categories as polaris-go under
+`./polaris/log/`: `base`, `network`, `cache`, `route`, `circuitbreaker`, `stat`,
+`statReport`, `detect`, `event`, `lossless`, and `auth`.
+Base logs go to `base/polaris-<clientId>.log`, and network logs to
+`network/polaris-network-<clientId>.log`. Category files open on first use;
+available categories do not enable the corresponding SDK features.
+`LogOptions.log_dir` sets the root directory. `POLARIS_LOG_PATH` accepts a directory
+or a legacy base filename; directory paths without an extension or with a trailing
+slash are recognized even before they exist. A legacy environment filename is
+also suffixed with the client ID. An explicit `LogOptions.file_path` is used exactly
+for base logs, with other categories in adjacent subdirectories using the same
+filename stem. Do not set both `log_dir` and `file_path`; active contexts must not
+share any category file, including across processes. Conflicts fail immediately with
+`SDKError`; SDK process logs follow the same exclusive ownership rule.
+The base filename and its numbered backups share ownership, so `client.log` and
+an explicit `client.log.1` cannot be used by different active loggers.
+Each category rotates independently at 50 MB with five backups retained for 30 days
+(24 hours per day), without midnight rotation. Numbered backups retain their existing
+names; their modification time records rollover age. Startup and hourly maintenance
+remove expired backups and inactive UUID-named context logs with the same filename
+prefix, while leaving active owners and unrelated files untouched. Stable hidden
+sidecar lock files must not be deleted while applications are running.
+Destruction stops maintenance, closes handlers and releases OS locks, including after
+abnormal process exit. `init_log(log_dir=...)`
+and `set_logger()` remain process logging
+entry points outside context-bound SDK operations. `apply_env=False` does not
+disable the independent logging environment variables.
+`LogOptions` supports constructor arguments or direct assignment to `level`,
+`log_dir`, `file_path`, `max_bytes`, `backup_count`, and `max_age_days` before creation.
+Setting `max_age_days=0` disables age cleanup. Rotation options also apply to
+`init_log()` / `create_log()` and have no YAML fields or environment variables. Later changes to
+the options object do not reconfigure an existing context's logger.
+See [logging options and retention](docs/config/environment-variables.md#日志环境变量与优先级)
+for cleanup scope and filesystem limitations.
 
-`ConsumerAPI` 提供 `async_get_all_instances`、`async_get_healthy_instances` 和
-`async_get_one_instance`，以及对应的同步包装。`isolate=true` 的实例默认不会被返回。
+Disk backups use `consumer.localCache.persistDir` (default: `./polaris/backup`).
+Each context has its own writer and queue, but contexts can intentionally share
+files and deletions when configured with the same directory.
+Backup names match the Go SDK:
+`svc#<namespace>#<service>#<resource>.json`. Namespace and service are URL-encoded;
+resource is currently `instance` only. Contents use protobuf canonical JSON and
+can be inspected directly.
+Idle resources expire after `consumer.localCache.serviceExpireTime` (default:
+24 hours), stopping their
+Discover streams and deleting backups. Application reads renew the idle clock;
+background refreshes do not. Scans run every half of the threshold, capped at one
+hour, excluding configured system services. Use different directories for different
+registries or independent backup lifecycles. See the [idle expiry example](examples/cache/expiry/README.md).
+Disk read/write retries use `persistMaxReadRetry`, `persistMaxWriteRetry` and
+`persistRetryInterval`; counts exclude the initial attempt. Writes are synced
+to a temporary file and atomically replace the backup. On restart, an instance
+backup is loaded into memory without using its modification time, and it does
+not immediately satisfy a default read. That read waits for the remote update;
+network failure or timeout returns the usable backup. Background discovery continues and
+replaces the snapshot after the server recovers. See the
+[restart recovery example](examples/cache/restart/README.md), which verifies
+forced process termination, successful offline reads, and a later remote revision.
+SERVICE_NOT_FOUND (400301) removes memory, Discover and the backup rather than falling back.
+Same revision / DATA_NO_CHANGE keeps the snapshot; a successful empty response replaces it.
+Configuration is copied at startup; changing the original
+object or `get_config()` is not a runtime hot-update mechanism.
+The removed `namespace`, `global.system.logPath/logLevel`,
+`global.statReporter.addresses`, and derived `global.api.bindIPValue` fields
+are rejected as unknown configuration keys.
 
-配置也支持 `Config.from_env()`（如 `POLARIS_SERVER_ADDRESSES`、
-`POLARIS_NAMESPACE`、`POLARIS_TOKEN`）和 JSON/TOML 文件。`token` 放在 gRPC 请求头
-`x-polaris-token` 里，与 Java、Go 一致；每个请求还带 Java 同样规则的 `request-id`。
+`global.api.bindIP` identifies the SDK client, not a business instance. It takes
+precedence over `bindIf`, which strictly resolves an IP from the named interface
+and fails startup if that interface has no IP. With both unset, startup probes
+the first registry address over TCP within `connectTimeout`, reads the local IP,
+and closes the probe connection. Failure logs a warning and keeps the SDK IP
+empty without preventing startup. The resolved value is available through
+`context.get_config().get_global().get_api().get_bind_ip()`; it is not copied
+into registration requests. Always specify `InstanceRegisterRequest.host`.
 
-## 客户端上报
+## Register an instance
 
-与 polaris-java `SDKContext.reportClient` 一致：`SDKContext` 每 60 秒调用一次
-`ReportClient`，上报本机地址、SDK 版本和客户端 ID（`<主机名>_<进程号>_<序号>`）。失败只记
-`base/polaris.log`，下个周期再报。本机地址依次取 `bind_ip`（`POLARIS_BIND_IP`）、连接第一个
-服务端地址时的本地地址、`127.0.0.1`，只解析一次。`report_enable=False`
-（`POLARIS_REPORT_ENABLE=0`）关闭上报。
+`ProviderAPI.register()`, `deregister()`, and `heartbeat()` are synchronous.
+Their awaitable counterparts are `async_register()`, `async_deregister()`, and
+`async_heartbeat()`; migrate existing `await provider.register(...)` calls to
+`await provider.async_register(...)`. Synchronous RPC APIs reject calls from an
+active event loop with `SDKError`; use the `async_` form there.
 
-在事件循环里创建的 `SDKContext` 立即开始上报；在同步代码里创建的，从第一次调用注册或发现
-接口时开始。服务端返回的地域只记在 debug 日志里，就近路由仍用调用方传入的位置。
+`register_instance()` and `async_register_instance()` also enable SDK-managed
+heartbeats. The TTL defaults to 5 seconds when unspecified (`None`); an explicit
+TTL must be positive integer seconds. `register()` only enables automatic
+heartbeats when the request sets `auto_heartbeat=True`.
 
-## 本地缓存与降级
+Automatic re-registration follows Java: two consecutive instance-not-found
+responses (`400202`) after `provider.minRegisterInterval` (default: 30 seconds).
+Other failures leave heartbeats running. Failed re-registrations back off with
+jitter up to 60 seconds. Deregistration stops heartbeat and re-registration tasks
+before sending the RPC, even when the RPC fails. `provider.destroy()` or
+`context.destroy()` stops tasks and closes the runtime without implicitly
+deregistering instances. See the [automatic-heartbeat example](examples/quickstart/README.md).
 
-实例和 `ROUTING`、`NEARBY_ROUTE_RULE`、`RATE_LIMIT`、`CIRCUIT_BREAKER` 规则按
-「命名空间 + 服务 + 资源类型」缓存在本地，调用只读本地缓存。
+The service token authorizes register, heartbeat, and deregister. It is separate
+from `POLARIS_TOKEN`, which authorizes the connection to Polaris.
 
-- 更新：每个资源一条 `Discover` 流，每 `refresh_interval_seconds`（默认 2 秒）带上次的
-  revision 重发。revision 不变时不更新缓存，也不重新应用规则。
-- 首次访问：所有资源并发等待服务端第一份快照，最多 `timeout_seconds`。
-- 降级：服务端没有响应或返回错误时，继续使用内存中的旧快照；内存中没有时，从
-  `persist_dir` 恢复上次落盘的快照，规则会一并生效。降级过的资源之后不再等待，
-  后台流恢复后自动替换为服务端数据。两者都没有时抛 `PolarisTransportError`。
-- 磁盘备份：默认写到 `./polaris/backup`（`POLARIS_PERSIST_DIR`），每次快照变化写一个文件
-  `svc#<namespace>#<service>#<type>.json`。`persist_dir=""` 只缓存在内存。写盘由一个后台
-  线程按顺序完成，不阻塞发现；每次写持有同名 `.lock` 文件，失败重试
-  `persist_max_write_retry` 次（默认 1），间隔 `persist_retry_interval_seconds`（默认 0.5 秒）。
-- 服务不存在（`400301`，或资源不存在 `400202`）：删除该资源的内存缓存和文件，与 Java 一致。
-- 空闲淘汰：`service_expire_enable=True`（`POLARIS_SERVICE_EXPIRE_ENABLE=1`）时，每隔
-  `service_expire_seconds`（默认 24 小时）检查一次。超过这个时长没有被 `ConsumerAPI`
-  读过的服务停止发现，内存缓存和磁盘文件一起删除；再次读取时重新发现。默认关闭，与 Java 一致。
-- 零实例保护：`zero_protection=True`（或 `POLARIS_ZERO_PROTECTION=1`）时，服务端返回空实例
-  列表会保留原有实例。默认关闭。
+## Discover an instance
 
-## 日志
+Reuse one `ConsumerAPI` inside a process. It keeps the instance discovery
+cache. `get_one_instance()` and `get_instances()` block and return
+concrete values.
+`async_get_one_instance()` and `async_get_instances()` are the awaitable forms.
+Both paths use the same engine. Report a call result with
+`update_service_call_result()` (synchronous) or `async_update_service_call_result()`
+(awaitable) for invocation metrics and the existing local circuit breaker.
+`get_instances()` returns filtered candidates, `get_all_instances()` the complete
+snapshot, and `get_healthy_instances()` isolation/recovery candidates without the
+middle metadata chain, including circuit-open instances by default. Their list results
+expose `.instances`; candidate queries do not consume half-open permits.
 
-SDK 使用自己的 logger，不进入应用的 `logging` 配置。创建 `SDKContext` 后，日志写到
-`log_dir`（默认 `./polaris/log`，可用 `POLARIS_LOG_DIR` 覆盖），按 polaris-go 的通道分子目录。
-`log_dir=""` 时不写文件，这些记录也不会传给应用。级别默认 `INFO`（`POLARIS_LOG_LEVEL`）。
-单个文件超过 `log_max_bytes`（默认 50MB）后切分，保留 `log_backup_count`（默认 5）份。
+## Built-in plugins
 
-| 路径 | logger | 内容 |
-| --- | --- | --- |
-| `base/polaris.log` | `polaris_python` | 上下文创建与销毁、注册与反注册、发现错误、降级 |
-| `network/polaris-network.log` | `polaris_python.network` | gRPC 重连与重试 |
-| `cache/polaris-cache.log` | `polaris_python.cache` | 快照变化（revision、数量、server / file）和缓存读写失败 |
-| `circuitbreaker/polaris-circuitbreaker.log` | `polaris_python.circuitbreaker` | 熔断状态切换 |
-| `heartbeat/polaris-instance-heartbeat.log` | `polaris_python.heartbeat` | 每次心跳结果 |
+| Kind | Names |
+| --- | --- |
+| Server connector | `grpc` |
+| Local cache | `inmemory`, `file` |
+| Service router | `isolatedRouter`, `metadataRouter`, `recoverRouter` |
+| Load balance | `weightedRandom`, `random` |
+| Circuit breaker | `composite` (local instance error count, error rate, and half-open recovery) |
 
-日志配置是进程级的，以最后创建的 `SDKContext` 为准。多个进程不要共用同一个 `log_dir`，
-标准库的切分不支持多进程同时写一个文件。`Config` 的 `repr` 不包含 `token`。
+Legacy configuration names `wr` and `err_count` normalize to `weightedRandom`
+and `composite` when defaults are applied. Remote governance rules are not fetched.
+The `prometheus` stat reporter supports pull and push export.
+See [local instance circuit breaking](docs/circuitbreaker.md) for reporting,
+the default rules, half-open permits, and the all-down fallback.
+Local default rule thresholds and recovery settings can be set in YAML or code;
+the half-open permit count follows `successCountAfterHalfOpen`.
 
-## 治理插件
+## Examples
 
-`SDKContext` 默认装配 metadata 路由、优先级/权重负载均衡、令牌桶/并发限流和
-熔断器。规则通过 `Discover` 的 `ROUTING`、`RATE_LIMIT`、`CIRCUIT_BREAKER`
-响应更新，也可以通过 `MetadataRouter`、`RateLimiter` 和 `CircuitBreaker`
-注入自定义规则。
+See [`examples/`](examples/), including the
+[multi-context lifecycle verifier](examples/multicontext/README.md).
 
-基础调用只需要使用 `get_one_instance` 或 `async_get_one_instance`，实例选择阶段会
-执行健康过滤、路由和负载均衡。若业务需要把真实请求结果反馈给熔断器，可在请求
-结束后调用 `update_service_call_result(instance, success=True/False)`；
-`before_call` / `after_call` 仅用于需要显式控制本地限流和熔断生命周期的高级场景。
+## License
 
-Skill 读接口、FastMCP/AgentScope 适配仍按方案放在后续阶段。
+[BSD 3-Clause](LICENSE).

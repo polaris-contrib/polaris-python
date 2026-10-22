@@ -1,0 +1,112 @@
+name: Testing
+
+on:
+  push:
+    branches:
+      - main
+      - release/*
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches:
+      - main
+      - release/*
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testing-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      matrix:
+        python: [ '3.12', '3.13' ]
+        os: [ 'windows-latest', 'ubuntu-latest' ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout codes
+        uses: actions/checkout@v4
+      - name: Set up uv and Python ${{ matrix.python }}
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          activate-environment: true
+      - name: Install dependencies
+        run: |
+          uv sync --group dev --locked
+          uv pip install pytest-cov
+      - name: Test with pytest
+        run: uv run python -m pytest --cov=polaris --cov-report=xml
+      - name: Upload coverage reports to Codecov
+        if: matrix.python == '3.12' && matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  package:
+    name: Build and verify wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - name: Verify lockfile
+        run: uv lock --check
+      - name: Build distributions
+        run: uv build
+      - name: Create clean wheel environment
+        run: uv venv "$RUNNER_TEMP/polaris-wheel-venv" --python 3.12
+      - name: Install wheel with dependencies
+        run: |
+          uv pip install --python "$RUNNER_TEMP/polaris-wheel-venv/bin/python" \
+            dist/*.whl \
+            "pytest>=8.3,<9" \
+            "pytest-asyncio>=0.24,<0.25"
+      - name: Verify installed distribution
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/polaris-wheel-venv/bin/python" - <<'PY'
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          import polaris
+          from polaris import Configuration, ConsumerAPI, SkillAPI, ProviderAPI, SDKContext, SDKError
+
+          assert version("polaris-python") == polaris.__version__
+          assert Path(polaris.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+
+          config = Configuration()
+          config.set_default()
+          assert config.get_global().get_server_connector().get_protocol() == "grpc"
+          assert all(
+              hasattr(polaris, name)
+              for name in (
+                  "Configuration",
+                  "ConsumerAPI",
+                  "SkillAPI",
+                  "ProviderAPI",
+                  "SDKContext",
+                  "SDKError",
+              )
+          )
+          print(f"verified polaris-python {polaris.__version__} from {polaris.__file__}")
+          PY
+      - name: Run tests against installed wheel
+        run: |
+          "$RUNNER_TEMP/polaris-wheel-venv/bin/python" -m pytest tests -q -m "not e2e"
+      - name: Upload wheel and sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: polaris-python-dist
+          path: dist/
+          retention-days: 14

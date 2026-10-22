@@ -1,0 +1,23 @@
+global:
+  admin:
+    port: 0
+  serverConnector:
+    addresses: ["${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}"]
+    token: "${POLARIS_TOKEN:}"
+  api:
+    timeout: 2s
+consumer:
+  localCache:
+    persistDir: ./.logs/manual/backup/consumer
+  serviceRouter:
+    percentOfMinInstances: 0
+  circuitBreaker:
+    enable: true
+    chain: [composite]
+    sleepWindow: 30s
+    successCountAfterHalfOpen: 3
+    defaultRuleEnable: true
+    defaultErrorCount: 10
+    defaultErrorPercent: 50
+    defaultInterval: 60s
+    defaultMinimumRequest: 10

@@ -1,0 +1,28 @@
+# Provider quickstart configuration. Environment variables override the
+# defaults written after each colon.
+provider:
+  # Minimum interval between automatic re-registrations.
+  minRegisterInterval: 30s
+
+global:
+  admin:
+    port: 0
+  serverConnector:
+    addresses:
+      - ${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}
+    protocol: grpc
+    token: ${POLARIS_TOKEN:}
+    connectTimeout: 500ms
+    messageTimeout: 1500ms
+  api:
+    timeout: 1s
+    bindIP: ""
+    reportInterval: 60s
+    maxRetryTimes: 1
+    retryInterval: 1s
+
+consumer:
+  localCache:
+    # The provider engine also creates a local cache; keep it separate from the
+    # consumer process when both run from the same working directory.
+    persistDir: ./.logs/manual/backup/provider

@@ -1,0 +1,11 @@
+{
+  "name": "document-agent",
+  "description": "Document search agent",
+  "version": "1.0.0",
+  "url": "http://127.0.0.1:8080/a2a",
+  "preferredTransport": "JSONRPC",
+  "capabilities": {"streaming": false},
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [{"id": "search", "name": "Search", "description": "Find documents", "tags": ["search"]}]
+}

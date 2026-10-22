@@ -1,0 +1,43 @@
+# Consumer quickstart configuration. Environment variables override the
+# defaults written after each colon.
+global:
+  admin:
+    port: 0
+  serverConnector:
+    addresses:
+      - ${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}
+    protocol: grpc
+    token: ${POLARIS_TOKEN:}
+    connectTimeout: 500ms
+    messageTimeout: 1500ms
+  api:
+    timeout: 1s
+    bindIP: ""
+    reportInterval: 60s
+    maxRetryTimes: 1
+    retryInterval: 1s
+
+consumer:
+  localCache:
+    type: inmemory
+    serviceExpireTime: 24h
+    serviceRefreshInterval: 2s
+    persistDir: ./.logs/manual/backup/consumer
+    persistMaxWriteRetry: 5
+    persistMaxReadRetry: 1
+    persistRetryInterval: 1s
+  serviceRouter:
+    beforeChain:
+      - isolatedRouter
+    chain:
+      - metadataRouter
+    afterChain:
+      - recoverRouter
+    percentOfMinInstances: 0.0
+  loadbalancer:
+    type: weightedRandom
+  circuitBreaker:
+    enable: true
+    checkPeriod: 10s
+    chain:
+      - composite

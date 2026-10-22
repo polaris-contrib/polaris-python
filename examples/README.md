@@ -1,85 +1,123 @@
-# Polaris Python SDK Examples
+# Examples
 
-示例目录按 Polaris Go SDK 的功能组织，默认连接本地 Polaris 服务端
-`127.0.0.1:8091`。也可以通过环境变量覆盖：
+[A2A metadata](a2a/README.md) uses ordinary Provider/Consumer APIs.
+[Monitoring](monitoring/README.md) verifies real HTTP calls and Prometheus pull/push.
+Both one-shot real-service examples explicitly deregister and destroy their context on exit.
 
-```bash
-export POLARIS_SERVER_ADDRESSES=127.0.0.1:8091
-export POLARIS_NAMESPACE=default
-export POLARIS_TOKEN=
-```
+[中文](README-zh.md)
 
-## 示例
+The examples use public `polaris` APIs and cover these existing SDK capabilities:
 
-| 目录 | 内容 | 运行方式 |
-| --- | --- | --- |
-| `quickstart/` | 注册、发现、异步和同步调用 | [quickstart/README.md](quickstart/README.md) |
-| `route/metadata/` | 元数据路由 | [route/metadata/README.md](route/metadata/README.md) |
-| `route/rule/` | 规则路由 | [route/rule/README.md](route/rule/README.md) |
-| `route/nearby/` | 就近路由 | [route/nearby/README.md](route/nearby/README.md) |
-| `ratelimit/` | 服务端 QPS 限流 | [ratelimit/README.md](ratelimit/README.md) |
-| `circuitbreaker/` | 服务端熔断规则 | [circuitbreaker/README.md](circuitbreaker/README.md) |
+- [quickstart](quickstart/README.md): synchronous provider registration, HTTP discovery and calls.
+- [circuitbreaker](circuitbreaker/README.md): local instance failures, routing and half-open recovery.
+- [sdkconfig/file](sdkconfig/file/README.md) and [sdkconfig/code](sdkconfig/code/README.md): YAML and code startup.
+- [cache/expiry](cache/expiry/README.md): idle eviction, stream closure and reload.
+- [cache/restart](cache/restart/README.md): interrupted writes and offline process restart.
+- [loadbalancer/random](loadbalancer/random/README.md): asynchronous and synchronous uniform-random selection.
+- [loadbalancer/wr](loadbalancer/wr/README.md): asynchronous and synchronous weighted-random selection.
+- [servicerouter](servicerouter/test.md): Java-aligned before/core/after chains and optional metadata routing.
+- [multicontext](multicontext/README.md): independent registration, heartbeat, discovery and shutdown.
+- [mcp](mcp/README.md): MCP registration, discovery, explicit contracts and deregistration using Provider/Consumer.
+- [skill](skill/README.md): published Skill queries, ZIP downloads and persistent fallback.
 
-每个 demo 目录包含 `README.md`、`test.md`、`verify_*.sh` 和 `cleanup.sh`。
-`test.md` 记录自动验证的用例和通过条件。`cleanup.sh` 清理残留进程和 `.logs/`。
-
-先启动 Provider，再启动 Consumer：
+Install dependencies once from the repository root:
 
 ```bash
-python examples/quickstart/provider.py --service polaris-python-demo
-python examples/quickstart/consumer.py --service polaris-python-demo
-curl http://127.0.0.1:18080/echo
+uv sync --group dev --locked
 ```
 
-异步 Consumer 使用 `async_get_one_instance`；同步 Consumer 使用对应的
-`get_one_instance`。实例选择内部会执行健康过滤、路由和负载均衡：
+Every demo directory has a Makefile, following the Go examples. `build` writes `bin`, `run` executes it, and `package` writes `.build/<directory>.tar.gz`. Pass program arguments with `ARGS`. `build-x86` is for linux/amd64.
 
 ```bash
-python examples/quickstart/consumer_sync.py --service polaris-python-demo
+make -C examples/quickstart/provider build
+make -C examples/quickstart/provider run ARGS="--help"
+make -C examples/quickstart package
 ```
 
-路由示例的 provider 需要先启动，并且路由规则需要在 Polaris 控制台配置，详见
-[`route/README.md`](route/README.md)。除 quickstart 的异步 consumer 外，其余示例
-默认使用同步接口。
-
-限流和熔断示例不会在客户端硬编码规则；第一次调用
-`get_one_instance` 时，SDK 会同时订阅服务端下发的
-`RATE_LIMIT` / `CIRCUIT_BREAKER` 规则。
-
-## 自动化验证
-
-每个 demo 有一个 `verify_*.sh`，会启动对应进程、在需要时通过 Polaris HTTP API
-创建规则，并检查调用结果。需要本机 Polaris 已在 `127.0.0.1:8091` 监听，管理端口
-为 `8090`。
+`examples/Makefile` runs the scripts beside it. Pass their arguments in `ARGS`:
 
 ```bash
-bash examples/verify_all.sh
+make -C examples verify ARGS="--help"
+make -C examples verify ARGS="--only cache/expiry"
+make -C examples verify-e2e ARGS="--only cache/restart"
+make -C examples logs ARGS="--latest --tail 30"
+make -C examples cleanup ARGS="--dry-run"
 ```
 
-也可以单独运行，例如 `bash examples/quickstart/verify_quickstart.sh`。地址和令牌用
-`POLARIS_SERVER`、`POLARIS_TOKEN` 覆盖。用例细节在各目录的 `test.md`。
+The script name also works: `make -C examples verify_e2e.sh ARGS="--help"`.
 
-验证中断或手动启动示例后，按目录清理：
+Offline verification, real-service verification, logs and cleanup are entered from
+`examples/` only. The scripts locate the repository from their own path.
+`POLARIS_PYTHON` selects the interpreter; otherwise they use the repository `.venv`,
+then `uv --project`.
 
 ```bash
-bash examples/quickstart/cleanup.sh -f
-bash examples/route/cleanup_all.sh -f
-bash examples/ratelimit/cleanup.sh -f
-bash examples/circuitbreaker/cleanup.sh -f
+./examples/verify.sh
+./examples/verify.sh --only circuitbreaker,cache
+./examples/verify.sh --only cache/expiry
+make -C examples/circuitbreaker/consumer run ARGS="--help"
+./examples/logs.sh --latest --tail 30
+./examples/logs.sh --latest --category circuitbreaker --tail 30
+./examples/cleanup.sh --dry-run
+./examples/cleanup.sh --force
+POLARIS_SERVER_ADDRESS=<host>:8091 POLARIS_SERVICE_TOKEN=<service-token> \
+  ./examples/cleanup.sh --keep-logs --delete-services --force
 ```
 
-`cleanup.sh -f` 直接清理，`--dry-run` 只展示。规则路由、就近路由、限流和熔断的自动验证会在服务端留下规则，清理脚本不删除这些规则。
+`make run` starts `main.py` in the demo directory, so relative `--config` paths resolve there.
+Each scenario keeps its checks in `test.md`.
 
-## E2E 测试
-
-E2E 测试默认跳过。确认 Polaris 服务端已启动后执行：
+Real Polaris verification registers temporary providers, checks discovery and calls, and
+keeps the processes and registrations running by default:
 
 ```bash
-POLARIS_E2E=1 \
-POLARIS_SERVER_ADDRESSES=127.0.0.1:8091 \
-uv run pytest -m e2e -q
+POLARIS_SERVER_ADDRESS=<host>:8091 \
+POLARIS_SERVICE_TOKEN=<service-token> \
+./examples/verify_e2e.sh
+./examples/verify_e2e.sh --only cache/expiry
 ```
 
-可选变量：`POLARIS_E2E_NAMESPACE`、`POLARIS_E2E_SERVICE`、
-`POLARIS_E2E_TIMEOUT`、`POLARIS_TOKEN`。测试会创建唯一实例，验证注册、发现、
-健康过滤、心跳和反注册，并在结束时清理实例。
+Stop the retained processes later while keeping logs, and optionally delete the
+test-created services:
+
+```bash
+./examples/cleanup.sh --keep-logs --force
+./examples/cleanup.sh --keep-logs --delete-services --force
+```
+
+Environment variables and result files are documented in [中文](README-zh.md#真实服务验证).
+
+Provider/consumer verification runs the complete associated quickstart or circuit scenario,
+retaining its results in the directory from which that verification script was selected.
+Group verifiers run each child once; `sdkconfig/code` and `sdkconfig/file` verify their own
+startup cases. Offline verification never requires an external registry. Quickstart,
+circuitbreaker and cache restart listen on temporary local ports.
+
+Each invocation creates its own `<demo>/.logs/verify-<timestamp>-<id>/` or
+`run-<timestamp>-<id>/` directory. Console output goes to `console.log`, verification output
+to `verification.log`, and the exit status to `result.json`. SDK files are under `polaris/log/`
+(or per-case `cases/<entry>-NN/polaris/log/`), split into `base`, `network`, `cache`, `route`, `circuitbreaker`
+and other categories, with a client ID in each filename. Multiple providers or contexts
+have their own component directories. Files remain available after success and failure.
+Direct `python main.py` runs keep SDK logs under the demo's `.logs/manual/polaris/log/`.
+`make run` also retains console output. `python verify.py` retains its artifacts.
+Every demo keeps its cache files in `polaris/backup/`, beside the run's `polaris/log/` log directory.
+Direct `python main.py` runs use `.logs/manual/polaris/backup/`; managed and verification runs use
+`<run>/polaris/backup/`. Multiple providers and contexts get separate component directories.
+The restart demo defaults `--persist-dir` to this directory, and the multiple-context demo
+defaults its backup root there. `work/` is reserved for configuration and test scaffolding.
+
+Cleanup is scoped to the chosen directory and its demos. It previews processes and the
+`.logs`/`.runtime` directories, then asks for confirmation; `--dry-run` only previews,
+`--force` runs without prompting. `--keep-logs` (alias `--processes-only`) stops tracked
+processes only and preserves logs; process records are removed by the demos on normal exit.
+`--delete-services` (alias `--remote`) deletes only `polaris-python-e2e-*` services in
+`POLARIS_E2E_NAMESPACE`.
+Only processes tracked by these demo entries with a matching PID, creation time and command are
+stopped. Graceful shutdown lets providers
+explicitly deregister and close their SDK contexts; a forced kill cannot guarantee remote
+deregistration. Explicitly assigned custom cache directories, YAML and source files are kept.
+
+Real registry demos retain their existing CLI and `POLARIS_E2E` opt-in behavior. Set the
+Polaris endpoint and access token as described in each demo. `POLARIS_TOKEN` authenticates
+SDK connections, while a service token authenticates provider registration.

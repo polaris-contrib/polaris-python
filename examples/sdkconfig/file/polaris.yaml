@@ -1,0 +1,20 @@
+global:
+  serverConnector:
+    addresses:
+      - ${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}
+    token: ""
+    # For authentication: ${POLARIS_TOKEN}
+    connectTimeout: 1000ms
+    messageTimeout: 3s
+  api:
+    bindIP: 127.0.0.1
+    timeout: 5s
+    maxRetryTimes: 2
+    retryInterval: 1s
+  statReporter:
+    enable: false
+consumer:
+  localCache:
+    serviceRefreshInterval: 5s
+  loadbalancer:
+    type: weightedRandom
