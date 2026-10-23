@@ -27,20 +27,20 @@ class DefaultConf:
 
     DefaultAPIInvokeTimeout = 1 * 1000
     DefaultAPIMaxRetryTimes = 1
-    DefaultAPIRetryInterval = 1 * 1000
+    DefaultAPIRetryInterval = 500
     DefaultDiscoverServiceRetryInterval = 5 * 1000
     DefaultServiceExpireTime = 24 * 60 * 60 * 1000
     DefaultServerConnectTimeout = 500
-    DefaultServerConnectionIdleTimeout = 3 * 1000
+    DefaultServerConnectionIdleTimeout = 60 * 1000
     DefaultBuiltInServerConnectionCloseTimeout = 2 * DefaultServerConnectionIdleTimeout
     DefaultRequestQueueSize = 1000
     DefaultServerSwitchInterval = 10 * 60 * 1000
     DefaultAgentListenAddress = "127.0.0.1:8888"
     DefaultCachePersistDir = "./polaris/backup"
-    DefaultPersistMaxWriteRetry = 5
-    DefaultPersistMaxReadRetry = 1
-    DefaultPersistRetryInterval = 1 * 1000
-    DefaultCircuitBreakerCheckPeriod = 10 * 1000
+    DefaultPersistMaxWriteRetry = 1
+    DefaultPersistMaxReadRetry = 0
+    DefaultPersistRetryInterval = 500
+    DefaultCircuitBreakerCheckPeriod = 60 * 1000
     MinCircuitBreakerCheckPeriod = 1 * 1000
     DefaultCircuitBreakerEnabled = True
     DefaultRequestCountAfterHalfOpen = 10
@@ -67,7 +67,7 @@ class DefaultConf:
     SvcKeyHeartBeatService = ServiceKey(ServerNamespace, ServerHeartBeatService)
     SvcKeyMonitorService = ServiceKey(ServerNamespace, ServerMonitorService)
     DefaultLoadBalancerWR = "weightedRandom"
-    DefaultServerMessageTimeout = 1500
+    DefaultServerMessageTimeout = 5 * 1000
 
     BuiltinCluster = "builtin"
     DiscoverCluster = "discover"

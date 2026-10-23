@@ -3,7 +3,7 @@
 [English](README.md)
 
 订阅当前 SDK 已实现能力发出的事件：实例缓存新增 / 更新 / 删除，以及本地实例熔断状态转换。
-可选 Pushgateway 只上报 Java 已定义的 `InstanceThreadEnd` 和熔断状态事件。不提供限流、无损上下线、配置中心或 watch 事件。
+可选 Pushgateway 只上报 `InstanceThreadEnd` 和熔断状态事件。不提供限流、无损上下线、配置中心或 watch 事件。
 
 ```bash
 ./examples/verify.sh --only events

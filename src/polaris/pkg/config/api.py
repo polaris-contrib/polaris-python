@@ -449,6 +449,8 @@ class ServiceRouterConfig:
     def set_default(self):
         if len(self.before_chain) == 0:
             self.before_chain = [DefaultConf.DefaultServiceRouterIsolated]
+        if len(self.chain) == 0:
+            self.chain = [DefaultConf.DefaultServiceRouterMetadata]
         if len(self.after_chain) == 0:
             self.after_chain = [DefaultConf.DefaultServiceRouterRecover]
         if not self.percent_of_min_instances:

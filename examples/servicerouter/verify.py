@@ -142,7 +142,7 @@ def main():
         with patch.object(GrpcConnection, "_stub", default_stub):
             demo.CONSUMER_INSTANCE = None
             default_reports, default_context = run_case("default", "default", {}, "all")
-            assert default_context.get_config().get_consumer().get_service_router().get_chain() == []
+            assert default_context.get_config().get_consumer().get_service_router().get_chain() == ["metadataRouter"]
             assert set(default_reports["async"]) <= {"prod", "stable", "missing"}
             assert set(default_reports["sync"]) <= {"prod", "stable", "missing"}
             assert all(len(values) == 2 for values in default_reports.values())
@@ -163,14 +163,14 @@ def main():
             demo.CONSUMER_INSTANCE = None
             all_down_reports, all_down_context = run_case(
                 "all-down-recovery", "default", {}, "all")
-            assert all_down_context.get_config().get_consumer().get_service_router().get_chain() == []
+            assert all_down_context.get_config().get_consumer().get_service_router().get_chain() == ["metadataRouter"]
             assert set(all_down_reports["async"]) <= {"down-prod", "down-stable"}
             assert set(all_down_reports["sync"]) <= {"down-prod", "down-stable"}
             assert all(len(values) == 2 for values in all_down_reports.values())
 
         results = {
-            "default_chain": ["isolatedRouter", "recoverRouter"],
-            "metadata_router_opt_in": True,
+            "default_chain": ["isolatedRouter", "metadataRouter", "recoverRouter"],
+            "metadata_router_on_default_chain": True,
             "metadata_exact_match": ["prod"],
             "metadata_others_failover": ["missing"],
             "all_down_recovery": True,

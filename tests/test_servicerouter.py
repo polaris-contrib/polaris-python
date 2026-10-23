@@ -65,7 +65,7 @@ def make_context():
 def test_default_context_builds_java_router_chain():
     config = Configuration()
     config.set_default()
-    assert config.get_consumer().get_service_router().get_chain() == []
+    assert config.get_consumer().get_service_router().get_chain() == ["metadataRouter"]
     manager = plugin_manager.DefaultPluginManager.new_context_manager()
     init_ctx = InitContext(config=config, plugins=manager)
     before_cls = manager.get(PluginType.SERVICE_ROUTER, "isolatedRouter")

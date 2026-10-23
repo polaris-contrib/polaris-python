@@ -82,8 +82,8 @@ response = provider.register_instance(InstanceRegisterRequest(
 The service token authorizes register, heartbeat, and deregister. It is different
 from `POLARIS_TOKEN`, which authenticates the SDK connection.
 
-Automatic re-registration follows Java behavior: two consecutive `400202`
-responses after `provider.minRegisterInterval` trigger registration again.
+Automatic re-registration runs after two consecutive `400202` responses and
+`provider.minRegisterInterval`.
 Deregistration stops heartbeat tasks before the RPC. Context destruction does not
 implicitly deregister instances.
 

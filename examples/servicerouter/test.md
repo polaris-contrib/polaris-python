@@ -1,12 +1,12 @@
 # 服务路由测试说明
 
-本目录验证 Python SDK 已按 Java SDK 的三段路由链结构执行实例筛选：
+本目录验证服务路由按 before、主链、after 三段筛选实例：
 
 - `beforeChain` 默认为 `isolatedRouter`，剔除隔离实例和权重为 0 的实例；
-- `chain` 默认为空，`metadataRouter` 不默认参与路由；
+- `chain` 默认为 `metadataRouter`；请求没有 metadata 时该路由不筛选；
 - `afterChain` 默认为 `recoverRouter`，剔除不健康和已熔断实例，并在全部不可用时执行全死全活回退。
 
-`metadataRouter` 是显式开启的业务路由插件。开启后按请求 metadata 的全部 key/value 精确匹配，
+`metadataRouter` 在默认主链上。请求带 metadata 时按全部 key/value 精确匹配，
 支持 `none`、`all`、`others` 三种降级策略。
 
 ## 脚本作用
@@ -29,7 +29,7 @@ POLARIS_SERVER=<host>:8091 POLARIS_TOKEN= \
   make -C examples/servicerouter run ARGS="default demo 3 --interval 0"
 ```
 
-显式开启 `metadataRouter` 并按 `env=prod` 过滤：
+按 `env=prod` 过滤：
 
 ```bash
 POLARIS_SERVER=<host>:8091 POLARIS_TOKEN= \
@@ -57,9 +57,9 @@ POLARIS_SERVER=<host>:8091 POLARIS_TOKEN= \
 
 验证顺序和断言如下：
 
-1. 默认链：`beforeChain=[isolatedRouter]`、`chain=[]`、`afterChain=[recoverRouter]`。
-   异步和同步各选择 2 次，所有被选择实例必须来自健康候选，隔离、权重 0 和不健康实例不能被选择。
-2. 显式开启 metadata：`chain=[metadataRouter]`，请求 `env=prod` 且 failover 为 `none`。
+1. 默认链：`beforeChain=[isolatedRouter]`、`chain=[metadataRouter]`、`afterChain=[recoverRouter]`。
+   默认请求不带 metadata，主链不筛选。异步和同步各选择 2 次，所有被选择实例必须来自健康候选，隔离、权重 0 和不健康实例不能被选择。
+2. metadata 过滤：`chain=[metadataRouter]`，请求 `env=prod` 且 failover 为 `none`。
    异步和同步各选择 2 次，每次都必须选中 `prod`。
 3. others 降级：请求 `env=missing` 且 failover 为 `others`。没有实例的 metadata 匹配该值时，
    返回不包含请求 key 的 `missing` 实例。
@@ -69,12 +69,12 @@ POLARIS_SERVER=<host>:8091 POLARIS_TOKEN= \
 验证器同时断言：
 
 - 每次选择后调用一次对应的结果上报 API；
-- `metadataRouter` 只有显式配置后才进入主链；
+- 默认主链包含 `metadataRouter`；没有请求 metadata 时不筛选；
 - 四个场景的 context 均已销毁；
 - owner loop 线程和 cache 写线程停止；
 - 所有 SDK 日志句柄关闭。
 
-成功时输出 JSON，包含 `metadata_router_opt_in: true`、`metadata_exact_match: ["prod"]`、
+成功时输出 JSON，包含 `metadata_router_on_default_chain: true`、`metadata_exact_match: ["prod"]`、
 `metadata_others_failover: ["missing"]`、`all_down_recovery: true` 和
 `context_destroyed: true`。
 

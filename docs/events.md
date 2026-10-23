@@ -32,9 +32,9 @@ print(events)  # first successful discovery emits OnServiceAdded
 | 事件 | 触发时机 |
 | --- | --- |
 | `InstanceThreadEnd` | 显式反注册成功后触发 |
-| `OnServiceAdded` | 实例快照首次进入本地缓存；按 Java 语义，磁盘备份首次加载也会触发 |
+| `OnServiceAdded` | 实例快照首次进入本地缓存；磁盘备份首次加载也会触发 |
 | `OnServiceUpdated` | 远端成功返回新 revision 并替换实例快照 |
-| `OnServiceDeleted` | 服务端返回 400301，或闲置淘汰删除实例资源；两者均按 Java 语义触发 |
+| `OnServiceDeleted` | 服务端返回 400301，或闲置淘汰删除实例资源 |
 | `CircuitBreakerOpen` | 本地默认实例熔断状态转换为 Open |
 | `CircuitBreakerHalfOpen` | 本地默认实例熔断状态转换为 HalfOpen |
 | `CircuitBreakerClose` | 本地默认实例熔断状态转换为 Close |
@@ -44,12 +44,12 @@ print(events)  # first successful discovery emits OnServiceAdded
 规则名，因此 `rule_name` 保持空字符串，不伪造规则信息。
 
 默认 logger 监听器会把事件写入每个 context 的 `event` 分类日志。远端上报由可选的
-Pushgateway 插件完成，只包含 Java `EventConstants` 中本 SDK 已实现的类型和名称。
+Pushgateway 插件完成，只上报 `InstanceThreadEnd` 和熔断状态事件。
 
 ## Pushgateway 上报
 
 `global.eventReporter.enable=true` 时启用 `pushgateway` 插件。插件作为当前 context 的
-事件监听器工作，但只入队 Java 会上报的事件：
+事件监听器工作，但只入队下表中的事件：
 
 | `event_type` | `event_name` |
 | --- | --- |

@@ -9,7 +9,7 @@
 consumer:
   circuitBreaker:
     enable: true
-    checkPeriod: 10s
+    checkPeriod: 1m
     sleepWindow: 30s
     successCountAfterHalfOpen: 3
     defaultRuleEnable: true

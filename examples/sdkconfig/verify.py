@@ -256,7 +256,7 @@ def main() -> int:
                 cwd, "minimal configuration reference",
                 ["--config", str(minimal_yaml), "--no-env"],
                 {
-                    **expected, "connect_timeout_ms": 500, "message_timeout_ms": 1500,
+                    **expected, "connect_timeout_ms": 500, "message_timeout_ms": 5000,
                     "api_timeout_ms": 1000, "max_retry_times": 1,
                     "service_refresh_interval_ms": 2000, "stat_reporter_enabled": True,
                     "bind_ip": "192.0.2.10",

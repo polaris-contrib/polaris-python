@@ -119,8 +119,7 @@ LogOptions 显式值 > 日志环境变量 > 默认值
 默认分类：
 
 ```text
-base network cache route circuitbreaker stat statReport
-detect event lossless auth ratelimit
+base network cache route circuitbreaker statReport event
 ```
 
 分类文件首次使用时创建。代码配置默认每类 50MB 滚动、保留 5 份和 30 天；

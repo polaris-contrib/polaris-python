@@ -80,8 +80,8 @@ response = provider.register_instance(InstanceRegisterRequest(
 
 服务令牌用于注册、心跳和反注册，与连接 Polaris 的 `POLARIS_TOKEN` 不同。
 
-自动重注册采用 Java 策略：连续 2 次 `400202` 且超过
-`provider.minRegisterInterval` 后重注册。反注册前停止心跳任务。
+连续 2 次 `400202` 且超过 `provider.minRegisterInterval` 后自动重注册。
+反注册前停止心跳任务。
 销毁 context 不会隐式反注册实例。
 
 ## Consumer

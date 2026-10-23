@@ -408,7 +408,7 @@ def test_code_configuration_does_not_read_files_or_apply_environment(tmp_path, m
     assert config.get_consumer().get_local_cache().get_service_refresh_interval() == 3000
 
 
-def test_defaults_match_go_configuration() -> None:
+def test_defaults_match_java_configuration() -> None:
     config = Configuration()
     config.set_default()
     config.verify()
@@ -422,11 +422,11 @@ def test_defaults_match_go_configuration() -> None:
     }
     assert vars(global_config.get_api()) == {
         "timeout": 1000, "bind_intf": "", "bind_ip": "", "bind_ip_value": "",
-        "report_interval": 60000, "max_retry_times": 1, "retry_interval": 1000,
+        "report_interval": 60000, "max_retry_times": 1, "retry_interval": 500,
     }
     assert vars(global_config.get_server_connector()) == {
         "addresses": ["127.0.0.1:8091"], "protocol": "grpc", "token": "", "connect_timeout": 500,
-        "message_time": 1500, "connection_idle_timeout": 3000, "request_queue_size": 1000,
+        "message_time": 5000, "connection_idle_timeout": 60000, "request_queue_size": 1000,
         "server_switch_interval": 600000, "plugin": {},
         "trusted_ca_file": "", "cert_file": "", "key_file": "",
     }
@@ -438,16 +438,16 @@ def test_defaults_match_go_configuration() -> None:
     consumer = config.get_consumer()
     assert vars(consumer.get_local_cache()) == {
         "type": "inmemory", "service_expire_time": 86400000, "service_refresh_interval": 2000,
-        "persist_dir": "./polaris/backup", "persist_max_write_retry": 5, "persist_max_read_retry": 1,
-        "persist_retry_interval": 1000, "plugin": {},
+        "persist_dir": "./polaris/backup", "persist_max_write_retry": 1, "persist_max_read_retry": 0,
+        "persist_retry_interval": 500, "plugin": {},
     }
     assert vars(consumer.get_service_router()) == {
-        "before_chain": ["isolatedRouter"], "chain": [],
+        "before_chain": ["isolatedRouter"], "chain": ["metadataRouter"],
         "after_chain": ["recoverRouter"], "percent_of_min_instances": 0.0, "plugin": {},
     }
     assert vars(consumer.get_load_balancer()) == {"type": "weightedRandom", "plugin": {}}
     assert vars(consumer.get_circuit_breaker()) == {
-        "enable": True, "check_period": 10000, "chain": ["composite"], "plugin": {},
+        "enable": True, "check_period": 60000, "chain": ["composite"], "plugin": {},
         "sleep_window": 30000, "success_count_after_half_open": 3, "default_rule_enable": True,
         "default_error_count": 10, "default_error_percent": 50, "default_interval": 60000,
         "default_minimum_request": 10,
@@ -475,10 +475,10 @@ def test_skill_token_inherits_from_global_when_empty(monkeypatch):
     assert environment.get_ai().get_skill().get_server_connector().token == "environment-token"
 
 
-def test_service_router_chain_stays_empty_unless_metadata_router_is_set():
+def test_service_router_chain_defaults_to_metadata_router():
     omitted = Configuration.from_dict({"consumer": {"serviceRouter": {}}}, apply_env=False)
     omitted.set_default()
-    assert omitted.get_consumer().get_service_router().get_chain() == []
+    assert omitted.get_consumer().get_service_router().get_chain() == ["metadataRouter"]
 
     specified = Configuration.from_dict(
         {"consumer": {"serviceRouter": {"chain": ["metadataRouter"]}}}, apply_env=False)
@@ -632,8 +632,8 @@ def test_go_zero_value_defaults_and_explicit_queue_size() -> None:
     config.verify()
     assert config.get_global().get_api().get_max_retry_times() == 1
     assert config.get_global().get_server_connector().get_request_queue_size() == 0
-    assert config.get_consumer().get_local_cache().get_persist_max_read_retry() == 1
-    assert config.get_consumer().get_local_cache().get_persist_max_write_retry() == 5
+    assert config.get_consumer().get_local_cache().get_persist_max_read_retry() == 0
+    assert config.get_consumer().get_local_cache().get_persist_max_write_retry() == 1
 
 
 def test_circuit_breaker_minimum_period_is_not_its_default() -> None:

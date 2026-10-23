@@ -31,8 +31,7 @@ from polaris.pkg.model.error import ErrorCode, SDKError
 default_log_dir = "./polaris/log"
 default_log_path = f"{default_log_dir}/base/polaris.log"
 LOG_CATEGORIES = (
-    "base", "stat", "statReport", "detect", "network", "cache", "event",
-    "lossless", "route", "auth", "circuitbreaker",
+    "base", "network", "cache", "route", "circuitbreaker", "statReport", "event",
 )
 default_logger: logging.Logger | None = None
 _logger_lock = RLock()

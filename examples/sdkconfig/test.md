@@ -46,7 +46,7 @@
 - 本地实例熔断参数、默认规则开关和时长占位符；
 - 最小配置参考和默认值填充；
 - 自动探测 SDK IP、探测失败、指定网卡和显式 IP 优先级；
-- Java/Go 系统集群层级；
+- `global.system` 下的 `discoverCluster`、`healthCheckCluster`、`monitorCluster`；
 - 文件占位符、环境变量覆盖和 `--no-env`；
 - `POLARIS_CONFIG_FILE`、当前目录和用户配置目录查找；
 - Go provider 的 `${POLARIS_SERVER}:8091` 写法；
