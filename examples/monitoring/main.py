@@ -101,15 +101,21 @@ async def run(args):
                         delay=int((time.monotonic() - started) * 1000),
                         caller_service=ServiceInfo("demo-caller", args.namespace), labels="env=demo"))
             url = f"http://127.0.0.1:{context.engine.stat_reporter.port}/metric" if args.mode == "pull" else None
-            print(json.dumps({"mode": args.mode, "metrics_url": url, "calls": 3}), flush=True)
             await asyncio.sleep(args.duration)
+            result = {"mode": args.mode, "metrics_url": url, "calls": 3}
+            if args.mode == "push":
+                result["pushes"] = context.engine.stat_reporter.push_count
+            print(json.dumps(result), flush=True)
             if url:
                 async with client.get(url) as response:
                     metrics = await response.text()
                     if 'callee_method="/echo"' not in metrics:
                         raise RuntimeError("No aggregated HTTP call metrics; allow at least 30 seconds")
                     print(metrics, end="", flush=True)
-        return {"mode": args.mode, "calls": 3}
+        result = {"mode": args.mode, "calls": 3}
+        if args.mode == "push":
+            result["pushes"] = context.engine.stat_reporter.push_count
+        return result
     finally:
         try:
             if context is not None and registered is not None:

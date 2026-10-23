@@ -82,8 +82,6 @@ class PrometheusConfig:
                     raise ValueError("require http(s) host:port without credentials, query or fragment")
             except ValueError as error:
                 raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, f"Invalid prometheus.address: {error}") from error
-        if self.type == "push" and not self.address and (not self.namespace or not self.service):
-            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "prometheus push requires address or namespace/service")
         try:
             for pattern in self.path_regex_list:
                 re.compile(pattern)

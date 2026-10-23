@@ -39,7 +39,7 @@ make -C examples/sdkconfig/file run ARGS="--service demo --namespace default --t
 
 覆盖范围包括：
 
-- 显式文件、相邻文件、完整配置参考和系统集群层级；
+- 显式文件、相邻文件、最小配置参考和系统集群层级；
 - 熔断参数、默认规则开关及带单位时长；
 - 自动 SDK IP、探测失败、指定网卡、显式 IP 和缺失网卡；
 - 文件值保留与环境变量覆盖；

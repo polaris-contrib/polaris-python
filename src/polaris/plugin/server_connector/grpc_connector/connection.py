@@ -72,6 +72,7 @@ class GrpcSettings:
     retry_backoff_seconds: float = 0.1
     refresh_interval_seconds: float = 2.0
     switch_interval_seconds: float | None = None
+    idle_timeout_seconds: float | None = None
     credentials: grpc.ChannelCredentials | None = None
 
 

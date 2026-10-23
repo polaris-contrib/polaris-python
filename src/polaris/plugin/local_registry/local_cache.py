@@ -27,6 +27,7 @@ from .base import BaseLocalRegistry, InstanceFilter
 from ...pkg.flow import impl
 from polaris.pkg.model.error import ErrorCode, SDKError, ServerCode
 import polaris.pkg.model.context as context
+from polaris.pkg.model.event import SDKEventName, SDKEventType, now_event
 from polaris.api.log import get_logger
 from typing import Dict, Any, List
 import time
@@ -195,6 +196,17 @@ class LocalCache(BaseLocalRegistry):
             response, create_local_value, old_instances=old_instances, loaded_from_file=loaded_from_file,
         )
 
+    def _publish_resource_event(self, event_name, service_key, old_value, new_value):
+        event_center = self.init_ctx.value_ctx.core_map.get(context.ContextKeyEventCenter)
+        if event_center is None:
+            return
+        event_center.publish(now_event(
+            self.init_ctx.value_ctx.get_client_id(), SDKEventType.INSTANCE, event_name,
+            client_ip=self.config.get_global().get_api().get_bind_ip(),
+            namespace=service_key.namespace, service=service_key.service,
+            old_value=old_value, new_value=new_value,
+        ))
+
     async def _load_value(self, service_key, cache_obj, use_discover_cache, timeout=None):
         if service_key.event_type != EventType.Instance:
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument, "only instance resources are cached")
@@ -214,10 +226,14 @@ class LocalCache(BaseLocalRegistry):
             engine.update_task_set[service_key] = update_task
 
         req = InstanceDiscoverRequest(1, service_key.service, service_key.namespace)
+        old_value = cache_obj.value
         if cache_obj.value is None:
             disk = await load_file_cache(engine, req)
             if disk is not None:
-                cache_obj.set_value(self._service_instances(disk, loaded_from_file=True))
+                disk_value = self._service_instances(disk, loaded_from_file=True)
+                cache_obj.set_value(disk_value)
+                self._publish_resource_event(SDKEventName.ON_SERVICE_ADDED, service_key, None, disk_value)
+                old_value = disk_value
         if cache_obj.value is not None:
             req.revision = cache_obj.value.revision
 
@@ -265,9 +281,14 @@ class LocalCache(BaseLocalRegistry):
                                "Timed out loading %s/%s type %s" % (req.namespace, req.name, req.type))
             raise err
 
-        cache_obj.set_value(self._service_instances(ret, old_instances=cache_obj.value))
+        new_value = self._service_instances(ret, old_instances=cache_obj.value)
+        cache_obj.set_value(new_value)
         cache_obj.remote_updated = True
         self.services[service_key] = True
+        self._publish_resource_event(
+            SDKEventName.ON_SERVICE_ADDED if old_value is None else SDKEventName.ON_SERVICE_UPDATED,
+            service_key, old_value, new_value,
+        )
 
     async def remove_service(self, service_key, cache_obj):
         """Delete one generation and its backup before allowing a replacement load."""
@@ -281,6 +302,7 @@ class LocalCache(BaseLocalRegistry):
         finally:
             if self.service_map.get(service_key) is cache_obj:
                 self.service_map.pop(service_key)
+        self._publish_resource_event(SDKEventName.ON_SERVICE_DELETED, service_key, cache_obj.value, None)
 
     def get_service_revision(self, service, namespace, type):
         service_key = ServiceEventKey(namespace, service, type)
@@ -319,8 +341,10 @@ class LocalCache(BaseLocalRegistry):
             return False
 
         with cache_object.lock:
+            old_value = cache_object.value
             cache_object.set_value(service_instance)
             cache_object.remote_updated = True
+            self._publish_resource_event(SDKEventName.ON_SERVICE_UPDATED, service_key, old_value, service_instance)
         self.services[service_key] = True
 
         return True
@@ -367,6 +391,7 @@ class LocalCache(BaseLocalRegistry):
                     with self._cache_lock:
                         if self.service_map.get(service_key) is cache_obj:
                             self.service_map.pop(service_key)
+                    self._publish_resource_event(SDKEventName.ON_SERVICE_DELETED, service_key, cache_obj.value, None)
                 expired.append(service_key)
                 logger.info("evicted idle cache resource %s", service_key.__dict__)
         return expired

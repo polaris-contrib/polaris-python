@@ -290,6 +290,7 @@ async def test_expiry_preserves_system_resources_and_same_service_in_other_names
     clock = [100.0]
     monkeypatch.setattr(localcache.time, "monotonic", lambda: clock[0])
     cache.config.get_consumer().get_local_cache().service_expire_time = 5000
+    cache._system_services.add(("Polaris", "polaris.monitor"))
     await cache.load_instances("polaris.monitor", "Polaris")
     await cache.load_instances("polaris.monitor", "ns")
     clock[0] = 105.0

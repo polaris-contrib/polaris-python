@@ -32,6 +32,7 @@ from polaris.pkg.flow.base_flow import get_load_cache_values
 from polaris.pkg.flow.register import RegisterStateManager
 from polaris.pkg.model.context import *
 from polaris.pkg.model.core import *
+from polaris.pkg.model.event import SDKEventName, SDKEventType, SDKEventStatus, now_event
 from polaris.pkg.model.engine import BaseEngine
 from polaris.pkg.model.rule import *
 from polaris.pkg.model.server import *
@@ -196,6 +197,7 @@ class Engine(BaseEngine):
         self.skill_flow = None
         self.skill_connector = None
         self.stat_reporter = None
+        self.event_reporters = []
 
     def set_default_value_for_instances_request(self, req: GetInstancesRequest):
         if req.timeout == 0:
@@ -290,6 +292,8 @@ class Engine(BaseEngine):
                 loop.run_until_complete(self.init_self_ip())
                 if self.stat_reporter is not None:
                     loop.run_until_complete(self.stat_reporter.start(self))
+                for event_reporter in self.event_reporters:
+                    loop.run_until_complete(event_reporter.start(self))
                 logger.warning("start timing update job")
                 loop.create_task(self.timing_update_server_task())
                 loop.create_task(self.timing_expire_cache_task())
@@ -418,6 +422,9 @@ class Engine(BaseEngine):
 
     async def _shutdown(self):
         current = asyncio.current_task()
+        for event_reporter in self.event_reporters:
+            await event_reporter.close()
+        self.event_reporters = []
         pending = [task for task in asyncio.all_tasks() if task is not current and not task.done()]
         for task in pending:
             task.cancel()
@@ -641,7 +648,15 @@ class Engine(BaseEngine):
             outgoing = copy.deepcopy(req)
             if state_request is not None:
                 outgoing.instance_id = state_request.instance_id
-            return await self.svc_connector.deregister_instance(outgoing)
+            await self.svc_connector.deregister_instance(outgoing)
+            event_center = self.global_ctx.core_map.get(ContextKeyEventCenter)
+            if event_center is not None:
+                event_center.publish(now_event(
+                    self.global_ctx.get_client_id(), SDKEventType.INSTANCE, SDKEventName.INSTANCE_THREAD_END,
+                    client_ip=self.configuration.get_global().get_api().get_bind_ip(),
+                    namespace=outgoing.namespace, service=outgoing.service,
+                    instance_id=outgoing.instance_id, host=outgoing.host, port=outgoing.port,
+                ))
 
     def sync_heartbeat(self, req: InstanceHeartbeatRequest) -> None:
         """Send an instance heartbeat on the SDK event loop."""
@@ -672,6 +687,7 @@ class Engine(BaseEngine):
         request.namespace = svc_instances.get_namespace()
         request.service = svc_instances.get_service()
         checked = []
+        transitions = []
         for name, cb in self.circuit_breaker_chain.items():
             if cb_name and name != cb_name:
                 continue
@@ -680,6 +696,7 @@ class Engine(BaseEngine):
                                   (CBStatusEnum.Closed, result.instance_2_close),
                                   (CBStatusEnum.HalfOpen, result.instance_2_halfopen)):
                 for node in nodes:
+                    previous_status = node.get_circuit_breaker_status().get_status()
                     properties = InstanceProperties()
                     properties.service = svc
                     properties.ID = node.get_id()
@@ -687,10 +704,34 @@ class Engine(BaseEngine):
                     properties.properties = {"CircuitBreakerStatus": CircuitBreakerStatus(
                         status=target, ts=result.now, allowed_requests_after_half_open=allowance)}
                     request.properties.append(properties)
+                    transitions.append((node, target, previous_status))
                     cb.on_state_change(node)
             checked.append((name, cb))
         if request.properties:
             self.registry.update_instances(request)
+            event_center = self.global_ctx.core_map.get(ContextKeyEventCenter)
+            if event_center is not None:
+                status_names = {
+                    CBStatusEnum.Open: SDKEventStatus.OPEN,
+                    CBStatusEnum.HalfOpen: SDKEventStatus.HALF_OPEN,
+                    CBStatusEnum.Closed: SDKEventStatus.CLOSE,
+                }
+                event_names = {
+                    CBStatusEnum.Open: SDKEventName.CIRCUIT_BREAKER_OPEN,
+                    CBStatusEnum.HalfOpen: SDKEventName.CIRCUIT_BREAKER_HALF_OPEN,
+                    CBStatusEnum.Closed: SDKEventName.CIRCUIT_BREAKER_CLOSE,
+                }
+                for node, target, previous_status in transitions:
+                    host = node.get_host()
+                    port = node.get_port()
+                    event_center.publish(now_event(
+                        self.global_ctx.get_client_id(), SDKEventType.CIRCUIT_BREAKING, event_names[target],
+                        client_ip=self.configuration.get_global().get_api().get_bind_ip(),
+                        namespace=node.get_namespace(), service=node.get_service(),
+                        instance_id=node.get_id(), host=host, port=port,
+                        previous_status=status_names.get(previous_status, ""), current_status=status_names[target],
+                        rule_name="", additional={"isolation_object": f"{host}:{port}"},
+                    ))
         for name, cb in checked:
             for node in svc_instances.instances:
                 self._schedule_circuit_break_check(node, name, cb)
@@ -1021,7 +1062,16 @@ def _initialize_flow_engine(flow_engine, config, plugins, global_ctx):
     target_plugin = plugins.get_instance(PluginType.SERVER_CONNECTOR, protocol)
     flow_engine.svc_connector = target_plugin
     flow_engine.skill_connector = plugins.get_instance(PluginType.SKILL_CONNECTOR, "polaris")
-    flow_engine.stat_reporter = plugins.get_instance(PluginType.STAT_REPORTER, "prometheus")
+    stat_chain = config.get_global().get_stat_reporter().get_chain()
+    stat_reporter_name = stat_chain[0] if stat_chain else "prometheus"
+    if stat_reporter_name == "pushgateway":
+        stat_reporter_name = "prometheus"
+    flow_engine.stat_reporter = plugins.get_instance(PluginType.STAT_REPORTER, stat_reporter_name)
+    event_reporter_config = config.get_global().get_event_reporter()
+    if event_reporter_config.is_enable():
+        for reporter_name in event_reporter_config.get_chain():
+            flow_engine.event_reporters.append(
+                plugins.get_instance(PluginType.EVENT_REPORTER, reporter_name))
     if hasattr(flow_engine.svc_connector, "connection"):
         flow_engine.svc_connector.connection.stat_reporter = flow_engine.stat_reporter
         flow_engine.svc_connector.engine = flow_engine

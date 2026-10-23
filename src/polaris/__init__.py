@@ -25,6 +25,7 @@ from polaris.api.log import LogOptions
 from polaris.api.provider import ProviderAPI, create_provider_by_config, create_provider_by_file
 from polaris.api.skill import SkillAPI, create_skill_by_config, create_skill_by_file
 from polaris.pkg.model.service import Instance
+from polaris.pkg.model.event import EventCenter, SDKEvent, SDKEventName, SDKEventType
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.error import ErrorCode, SDKError
 from polaris._version import __version__
@@ -36,6 +37,10 @@ __all__ = [
     "LogOptions",
     "ProviderAPI",
     "Instance",
+    "EventCenter",
+    "SDKEvent",
+    "SDKEventName",
+    "SDKEventType",
     "SkillAPI",
     "create_skill_by_config",
     "create_skill_by_file",

@@ -22,6 +22,8 @@ POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token 
   make -C examples/monitoring run ARGS="--mode push --push-address 127.0.0.1:9091"
 ```
 
+Push mode prints the number of successful Pushgateway requests as `pushes` after the
+configured interval. Real E2E verification checks that at least one push succeeded.
 An empty push address list discovers `Polaris/polaris.pushgateway`.
 Invocation reports use `async_update_service_call_result`; synchronous callers use
 `update_service_call_result`. No business request interception is automatic.

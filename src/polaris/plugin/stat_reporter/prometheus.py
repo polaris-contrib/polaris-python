@@ -66,6 +66,7 @@ class PrometheusReporter(BaseStatReporter):
         self.task = None
         self.runner = None
         self.session = None
+        self.push_count = 0
         self.port = None
         self.engine = None
         self.closed = False
@@ -172,9 +173,19 @@ class PrometheusReporter(BaseStatReporter):
     async def _address(self):
         if self.config.address:
             return self.random.choice(self.config.address)
-        monitor = self.global_config.get_system().get_monitor_cluster()
-        namespace = monitor.get_namespace() or self.config.namespace
-        service = monitor.get_service() or self.config.service
+        if self.config.namespace and self.config.service:
+            namespace = self.config.namespace
+            service = self.config.service
+        else:
+            monitor = self.global_config.get_system().get_monitor_cluster()
+            if not monitor.get_namespace() or not monitor.get_service():
+                raise SDKError(
+                    ErrorCode.ErrCodeAPIInvalidConfig,
+                    "Prometheus push requires address or namespace/service from "
+                    "plugin.prometheus or global.system.monitorCluster",
+                )
+            namespace = monitor.get_namespace()
+            service = monitor.get_service()
         node = await self.engine._async_get_one_instance(GetOneInstanceRequest(
             namespace=namespace, service=service))
         if node is None:
@@ -212,6 +223,7 @@ class PrometheusReporter(BaseStatReporter):
                 await response.read()
                 if not 200 <= response.status < 300:
                     raise SDKError(ErrorCode.ErrCodeNetworkError, f"Pushgateway returned HTTP {response.status}")
+                self.push_count += 1
         except BaseException:
             with self.lock:
                 for key, (revision, values) in list(self.values.items()):

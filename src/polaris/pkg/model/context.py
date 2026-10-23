@@ -17,6 +17,7 @@ from threading import RLock
 from uuid import uuid4
 
 ContextKeyEngine = "engine"
+ContextKeyEventCenter = "event_center"
 
 
 class ValueContext:

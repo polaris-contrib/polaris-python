@@ -479,6 +479,25 @@ def run_scenario(name, address, service_token, namespace, env):
         if not any('"zip_size"' in line for line in output.splitlines()):
             raise AssertionError("Skill example did not finish its download")
         return {"skill": skill_name, "effect": "queried and downloaded an existing published Skill"}
+    if name == "monitoring":
+        service = service_name(name)
+        registry_host = address.rsplit(":", 1)[0].strip("[]")
+        push_address = f"{registry_host}:9091"
+        output = run_demo(EXAMPLES / "monitoring/main.py", [
+            "--server", address, "--token", service_token, "--namespace", namespace,
+            "--service", service, "--mode", "push", "--push-address", push_address,
+        ], env, timeout=90)
+        result = last_json(output)
+        if result.get("mode") != "push" or result.get("calls") != 3:
+            raise AssertionError("Real push-mode invocation metrics are missing")
+        if result.get("pushes", 0) < 1:
+            raise AssertionError("Real Pushgateway export did not complete successfully")
+        return {
+            "service": service,
+            "push_address": push_address,
+            **result,
+            "effect": "reported real HTTP call metrics to Pushgateway and explicitly deregistered",
+        }
     if name in ("a2a", "monitoring"):
         service = service_name(name)
         output = run_demo(EXAMPLES / name / "main.py", [
@@ -488,8 +507,6 @@ def run_scenario(name, address, service_token, namespace, env):
         result = last_json(output)
         if name == "a2a" and result.get("transport") != "JSONRPC":
             raise AssertionError("A2A metadata discovery failed")
-        if name == "monitoring" and ('callee_method="/echo"' not in output or result.get("calls") != 3):
-            raise AssertionError("Real HTTP invocation metrics are missing")
         return {"service": service, **result, "effect": "verified and explicitly deregistered"}
     return verify_discovery_demo(name, env, address, service_token, namespace)
 

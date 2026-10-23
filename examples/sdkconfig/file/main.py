@@ -130,6 +130,7 @@ def main() -> int:
             path = (args.config or Path(__file__).with_name("polaris.yaml")).expanduser().resolve()
             config = Configuration.from_file(str(path), apply_env=not args.no_env)
             source = str(path)
+        config.set_default()
         config.get_consumer().get_local_cache().persist_dir = str(
             demo_backup_directory(__file__, component="file")
         )

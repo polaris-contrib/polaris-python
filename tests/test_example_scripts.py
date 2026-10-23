@@ -52,7 +52,7 @@ def test_real_verification_registers_into_python_integration(monkeypatch):
     assert e2e_namespace() == "custom"
 
 
-@pytest.mark.parametrize("name", ["mcp", "skill", "a2a", "monitoring"])
+@pytest.mark.parametrize("name", ["mcp", "skill", "a2a", "monitoring", "events"])
 def test_ai_example_default_does_not_create_context_or_connect(monkeypatch, name):
     import importlib
     example = importlib.import_module(f"examples.{name}.main")
@@ -88,6 +88,7 @@ def test_multicontext_verifier_checks_post_exit_cleanup(tmp_path, monkeypatch):
     ("sdkconfig/code/main.py", ("consumer.get_instances(",)),
     ("sdkconfig/file/main.py", ("consumer.get_instances(",)),
     ("multicontext/main.py", ("sync_discover(", "consumer.get_instances(")),
+    ("events/main.py", ("consumer.get_instances(", "get_event_center().register_listener(")),
 ])
 def test_demo_default_or_verifier_paths_cover_synchronous_apis(relative_path, calls):
     source = (REPO / "examples" / relative_path).read_text(encoding="utf-8")

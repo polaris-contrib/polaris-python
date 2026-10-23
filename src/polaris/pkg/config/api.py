@@ -24,6 +24,7 @@ from polaris.pkg.model.error import ErrorCode
 from polaris.pkg.model.error import SDKError
 from polaris.pkg.model.service import RunMode
 from polaris.pkg.config.stat_reporter import AdminConfig, prometheus_config
+from polaris.pkg.config.event import pushgateway_event_config
 
 
 # 默认集群类型
@@ -128,11 +129,7 @@ class SystemConfig(SelfVerifier):
         if self.health_check_cluster is None:
             self.health_check_cluster = ServerClusterConfig()
         if self.monitor_cluster is None:
-            self.monitor_cluster = create_server_cluster_conf(DefaultConf.SvcKeyMonitorService)
-        if self.monitor_cluster.namespace is None:
-            self.monitor_cluster.namespace = DefaultConf.ServerNamespace
-        if self.monitor_cluster.service is None:
-            self.monitor_cluster.service = DefaultConf.ServerMonitorService
+            self.monitor_cluster = ServerClusterConfig()
         self.discover_cluster.set_default()
         self.health_check_cluster.set_default()
         self.monitor_cluster.set_default()
@@ -250,9 +247,14 @@ class StatReporterConfig:
             raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "Invalid global.statReporter enable/chain")
         if not isinstance(self.plugin, dict):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "statReporter.plugin must be an object")
-        if self.enable and self.chain != ["prometheus"]:
-            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "Only the prometheus stat reporter is supported")
+        if self.enable and (len(self.chain) != 1 or self.chain[0] not in ("prometheus", "pushgateway")):
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "global.statReporter.chain must be [prometheus] or [pushgateway]")
+        if self.enable and self.chain == ["pushgateway"] and self.get_prometheus().type != "push":
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "statReporter chain [pushgateway] requires prometheus.type=push")
         self.get_prometheus()
+
 
     def set_default(self):
         if self.enable is None:
@@ -260,6 +262,43 @@ class StatReporterConfig:
         if len(self.chain) == 0:
             self.chain = [DefaultConf.DefaultStatReporter]
         self.get_prometheus()
+
+
+class EventReporterConfig:
+    """Configure the context-owned event reporter chain."""
+
+    def __init__(self, enable: bool | None = None, chain: List[str] = None, plugin: Dict = None):
+        self.enable = enable
+        self.chain = [] if chain is None else chain
+        self.plugin = {} if plugin is None else plugin
+
+    def is_enable(self):
+        return bool(self.enable)
+
+    def get_chain(self):
+        return self.chain
+
+    def get_pushgateway(self):
+        """Return the typed Pushgateway event options from YAML or code."""
+        result = pushgateway_event_config(self.plugin.get("pushgateway", {}))
+        self.plugin["pushgateway"] = result
+        return result
+
+    def verify(self):
+        if type(self.enable) is not bool or not isinstance(self.chain, list):
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "Invalid global.eventReporter enable/chain")
+        if not isinstance(self.plugin, dict):
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "eventReporter.plugin must be an object")
+        if self.enable and self.chain != ["pushgateway"]:
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "Only the pushgateway event reporter is supported")
+        self.get_pushgateway()
+
+    def set_default(self):
+        if self.enable is None:
+            self.enable = False
+        if len(self.chain) == 0:
+            self.chain = ["pushgateway"]
+        self.get_pushgateway()
 
 
 # 本地缓存配置
@@ -760,7 +799,7 @@ def ip_from_int_with_port(ipstr):
 class GlobalConfig(SelfVerifier):
     def __init__(self, system_conf: SystemConfig = None, api_conf: APIConfig = None,
                  server_connector: ServerConnectorConfig = None, stat_reporter: StatReporterConfig = None,
-                 admin: AdminConfig = None):
+                 admin: AdminConfig = None, event_reporter: EventReporterConfig = None):
         # 	System          *SystemConfigImpl          `yaml:"system"`
         # 	API             *APIConfigImpl             `yaml:"api"`
         # 	ServerConnector *ServerConnectorConfigImpl `yaml:"serverConnector"`
@@ -770,6 +809,7 @@ class GlobalConfig(SelfVerifier):
         self.server_connector = server_connector
         self.stat_reporter = stat_reporter
         self.admin = admin
+        self.event_reporter = event_reporter
 
     def get_admin(self):
         """Return the context's metrics listener configuration."""
@@ -791,9 +831,14 @@ class GlobalConfig(SelfVerifier):
     def get_stat_reporter(self) -> StatReporterConfig:
         return self.stat_reporter
 
+    def get_event_reporter(self) -> EventReporterConfig:
+        """Return the event reporter chain configuration."""
+        return self.event_reporter
+
     def verify(self):
         self.admin.verify()
         self.stat_reporter.verify()
+        self.event_reporter.verify()
         try:
             self.system_conf.verify()
         except SDKError as err:
@@ -822,10 +867,13 @@ class GlobalConfig(SelfVerifier):
             self.server_connector = ServerConnectorConfig()
         if not self.stat_reporter:
             self.stat_reporter = StatReporterConfig()
+        if not self.event_reporter:
+            self.event_reporter = EventReporterConfig()
         self.api_conf.set_default()
         self.system_conf.set_default()
         self.server_connector.set_default()
         self.stat_reporter.set_default()
+        self.event_reporter.set_default()
 
 
 class ProviderConfig(SelfVerifier):

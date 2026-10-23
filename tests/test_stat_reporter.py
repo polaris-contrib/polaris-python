@@ -30,7 +30,7 @@ from polaris.pkg.model.service import Instance
 from polaris.pkg.model.server import InstanceRegisterRequest
 from polaris.plugin.stat_reporter.prometheus import PrometheusReporter, METRICS, NULL
 from polaris.plugin_manager import InitContext
-from tests.test_ai import runtime
+from tests.test_ai import instance, runtime
 
 
 def reporter(**options):
@@ -179,6 +179,47 @@ def test_code_configuration_getter_keeps_assignments():
     assert config.get_global().get_stat_reporter().get_prometheus().path == "/custom"
 
 
+def test_pushgateway_stat_chain_is_prometheus_push_alias():
+    config = Configuration.from_dict({"global": {"statReporter": {
+        "chain": ["pushgateway"],
+        "plugin": {"prometheus": {"type": "push", "address": ["127.0.0.1:9091"]}},
+    }}}, apply_env=False)
+    config.set_default()
+    config.verify()
+    assert config.get_global().get_stat_reporter().get_chain() == ["pushgateway"]
+    assert config.get_global().get_stat_reporter().get_prometheus().type == "push"
+
+
+def test_pushgateway_stat_chain_rejects_pull_mode():
+    config = Configuration.from_dict({"global": {"statReporter": {
+        "chain": ["pushgateway"], "plugin": {"prometheus": {"type": "pull"}},
+    }}}, apply_env=False)
+    config.set_default()
+    with pytest.raises(SDKError, match="requires prometheus.type=push"):
+        config.verify()
+
+
+def test_pushgateway_stat_chain_starts_prometheus_reporter():
+    from polaris import init_context_by_config
+
+    config = Configuration.from_dict({"global": {
+        "admin": {"port": -1},
+        "statReporter": {
+            "chain": ["pushgateway"],
+            "plugin": {"prometheus": {"type": "push", "address": ["127.0.0.1:9091"]}},
+        },
+    }}, apply_env=False)
+    config.set_default()
+    config.verify()
+    context = init_context_by_config(config)
+    try:
+        assert config.get_global().get_stat_reporter().get_chain() == ["pushgateway"]
+        assert type(context.engine.stat_reporter).__name__ == "PrometheusReporter"
+        assert context.engine.stat_reporter.config.type == "push"
+    finally:
+        context.destroy()
+
+
 def test_internal_register_and_application_reports_share_context_metrics(runtime):
     _, context, _ = runtime
     provider, consumer = ProviderAPI(context), ConsumerAPI(context)
@@ -236,7 +277,7 @@ def test_fixed_monitor_port_conflict_releases_failed_context(runtime, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_push_monitor_cluster_discovery_override_host_and_cancel_merge():
+async def test_push_default_service_discovery_override_host_and_cancel_merge():
     from tests.test_ai import instance
     requests, entered = [], asyncio.Event()
 
@@ -271,13 +312,84 @@ async def test_push_monitor_cluster_discovery_override_host_and_cancel_merge():
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending
-        assert queries == [("Polaris", "polaris.monitor")]
+        assert queries == [("Polaris", "polaris.pushgateway")]
         assert stats.period == 0 and not stats.pushing
         stats.aggregate(advance=False)
         assert samples(stats.render())["upstream_rq_total"][0].value == 2
     finally:
         await stats.close()
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_push_address_precedes_plugin_and_monitor_service_discovery():
+    stats = reporter(type="push", address=["127.0.0.1:9091"],
+                     namespace="plugin", service="plugin.pushgateway")
+    monitor = stats.global_config.get_system().get_monitor_cluster()
+    monitor.namespace, monitor.service = "Polaris", "polaris.monitor"
+
+    async def discover(request):
+        raise AssertionError("explicit address must not use service discovery")
+
+    stats.engine = SimpleNamespace(_async_get_one_instance=discover)
+    try:
+        assert await stats._address() == "127.0.0.1:9091"
+    finally:
+        await stats.close()
+
+
+@pytest.mark.asyncio
+async def test_push_plugin_service_precedes_monitor_cluster():
+    stats = reporter(type="push", namespace="plugin", service="plugin.pushgateway")
+    monitor = stats.global_config.get_system().get_monitor_cluster()
+    monitor.namespace, monitor.service = "Polaris", "polaris.monitor"
+    queries = []
+
+    async def discover(request):
+        queries.append((request.namespace, request.service))
+        node = Instance(instance("gateway", 9091),
+                        ServiceInfo("plugin.pushgateway", "plugin"))
+        return node
+
+    stats.engine = SimpleNamespace(_async_get_one_instance=discover)
+    try:
+        assert await stats._address() == "127.0.0.1:9091"
+        assert queries == [("plugin", "plugin.pushgateway")]
+    finally:
+        await stats.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("namespace, service", [
+    ("", ""), ("plugin", ""), ("", "plugin.pushgateway"),
+])
+async def test_push_monitor_cluster_is_used_when_plugin_service_is_not_configured(namespace, service):
+    stats = reporter(type="push", namespace=namespace, service=service)
+    monitor = stats.global_config.get_system().get_monitor_cluster()
+    monitor.namespace, monitor.service = "Polaris", "polaris.monitor"
+    queries = []
+
+    async def discover(request):
+        queries.append((request.namespace, request.service))
+        return Instance(instance("gateway", 9091),
+                        ServiceInfo("polaris.monitor", "Polaris"))
+
+    stats.engine = SimpleNamespace(_async_get_one_instance=discover)
+    try:
+        assert await stats._address() == "127.0.0.1:9091"
+        assert queries == [("Polaris", "polaris.monitor")]
+    finally:
+        await stats.close()
+
+
+@pytest.mark.asyncio
+async def test_push_without_address_or_discovery_service_is_rejected():
+    stats = reporter(type="push", namespace="", service="")
+    try:
+        with pytest.raises(SDKError, match="plugin\\.prometheus or global\\.system\\.monitorCluster"):
+            await stats._address()
+    finally:
+        await stats.close()
 
 
 @pytest.mark.asyncio

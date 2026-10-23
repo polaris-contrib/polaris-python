@@ -31,8 +31,6 @@ from polaris.pkg.config.api import (
     get_server_services,
 )
 from polaris.pkg.config.loader import (
-    _NESTED_TYPES,
-    _normalise_keys,
     build_configuration,
     find_default_config_file,
     load_config_file,
@@ -420,7 +418,7 @@ def test_defaults_match_go_configuration() -> None:
     assert vars(system.get_discover_cluster()) == {"namespace": "", "service": "", "refresh_interval": 60000}
     assert vars(system.get_health_check_cluster()) == {"namespace": "", "service": "", "refresh_interval": 60000}
     assert vars(system.get_monitor_cluster()) == {
-        "namespace": "Polaris", "service": "polaris.monitor", "refresh_interval": 60000,
+        "namespace": "", "service": "", "refresh_interval": 60000,
     }
     assert vars(global_config.get_api()) == {
         "timeout": 1000, "bind_intf": "", "bind_ip": "", "bind_ip_value": "",
@@ -454,7 +452,7 @@ def test_defaults_match_go_configuration() -> None:
         "default_error_count": 10, "default_error_percent": 50, "default_interval": 60000,
         "default_minimum_request": 10,
     }
-    assert set(get_server_services(config)) == {ClusterType.MonitorCluster}
+    assert get_server_services(config) == {}
 
 
 def test_skill_token_inherits_from_global_when_empty(monkeypatch):
@@ -562,7 +560,7 @@ def test_system_clusters_use_java_go_hierarchy(cluster_key, refresh_key) -> None
         "namespace": "custom", "service": "discovery", "refresh_interval": 600000,
     }
     assert system.get_health_check_cluster().get_namespace() == ""
-    assert system.get_monitor_cluster().get_service() == "polaris.monitor"
+    assert system.get_monitor_cluster().get_service() == ""
     assert not hasattr(system, "server_clusters")
 
 
@@ -575,7 +573,7 @@ def test_system_clusters_can_be_assigned_directly_in_code() -> None:
     config.set_default()
     config.verify()
     clusters = get_server_services(config)
-    assert set(clusters) == {ClusterType.DiscoverCluster, ClusterType.HealthCheckCluster, ClusterType.MonitorCluster}
+    assert set(clusters) == {ClusterType.DiscoverCluster, ClusterType.HealthCheckCluster}
     for cluster_type, service in clusters.items():
         assert service.cluster_type == cluster_type
         assert service.service_key.get_namespace() == "custom"
@@ -583,13 +581,13 @@ def test_system_clusters_can_be_assigned_directly_in_code() -> None:
     assert system.get_health_check_cluster().get_refresh_interval() == 3000
 
 
-def test_partial_monitor_cluster_retains_go_default_service() -> None:
+def test_partial_monitor_cluster_defaults_to_empty_identity() -> None:
     config = Configuration.from_dict({"global": {"system": {
         "monitorCluster": {"refreshInterval": "10m"},
     }}}, apply_env=False)
     config.set_default()
     assert vars(config.get_global().get_system().get_monitor_cluster()) == {
-        "namespace": "Polaris", "service": "polaris.monitor", "refresh_interval": 600000,
+        "namespace": "", "service": "", "refresh_interval": 600000,
     }
 
 
@@ -769,34 +767,17 @@ def test_legacy_plugin_names_normalize_to_java_go_names() -> None:
     assert config.get_consumer().get_circuit_breaker().get_chain() == ["composite"]
 
 
-def test_complete_configuration_reference_loads() -> None:
+def test_minimal_configuration_reference_loads_with_defaults() -> None:
     path = Path(__file__).resolve().parents[1] / "docs" / "config" / "polaris.yaml"
     config = Configuration.from_file(str(path), apply_env=False)
     config.set_default()
     config.verify()
+    assert config.get_global().get_server_connector().get_addresses() == ["127.0.0.1:8091"]
     assert config.get_global().get_system().get_discover_cluster().get_refresh_interval() == 60000
     assert config.get_consumer().get_load_balancer().get_type() == "weightedRandom"
 
 
-def test_complete_reference_covers_public_fields_and_matches_defaults() -> None:
+def test_minimal_configuration_reference_only_contains_required_address() -> None:
     path = Path(__file__).resolve().parents[1] / "docs" / "config" / "polaris.yaml"
     document = load_config_file(path)
-    defaults = Configuration()
-    defaults.set_default()
-    defaults.get_global().get_stat_reporter().get_prometheus()
-    reference = Configuration.from_dict(document, apply_env=False)
-    reference.set_default()
-    reference.get_global().get_stat_reporter().get_prometheus()
-
-    def check_section(cls, data, actual, expected):
-        keys = _normalise_keys(cls, data)
-        public_fields = set(vars(expected)) - {"bind_ip_value"}
-        assert set(keys) == public_fields
-        for name, value in keys.items():
-            nested_type = _NESTED_TYPES.get(cls, {}).get(name)
-            if nested_type is not None:
-                check_section(nested_type, value, getattr(actual, name), getattr(expected, name))
-            else:
-                assert getattr(actual, name) == getattr(expected, name)
-
-    check_section(Configuration, document, reference, defaults)
+    assert document == {"global": {"serverConnector": {"addresses": ["127.0.0.1:8091"]}}}

@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+import time
 
 from polarismesh_specification.api.v1.service_manage import response_pb2
 
@@ -69,6 +71,7 @@ class GrpcConnector(BaseServerConnector):
                 retry_backoff_seconds=max(api_config.get_retry_interval(), 0) / 1000,
                 refresh_interval_seconds=max(cache_config.get_service_refresh_interval(), 1) / 1000,
                 switch_interval_seconds=max(connector_config.get_server_switch_interval(), 1) / 1000,
+                idle_timeout_seconds=max(connector_config.get_connect_idle_timeout(), 1) / 1000,
                 credentials=channel_credentials(connector_config),
             ),
             context_logger=init_ctx.logger,
@@ -79,14 +82,71 @@ class GrpcConnector(BaseServerConnector):
         self.engine = None
         self._cluster_connections = {}
         self._stream_connections = {}
+        self._stream_last_activity = {}
+        self._idle_task = None
+        self._request_slots = asyncio.Semaphore(connector_config.get_request_queue_size() + 1)
+        self.logger = init_ctx.logger.get_logger("network") if init_ctx.logger is not None else None
+
+    @asynccontextmanager
+    async def _request_slot(self):
+        """Bound concurrent requests; extra callers wait like Go's buffered task channel."""
+        await self._request_slots.acquire()
+        try:
+            yield
+        finally:
+            self._request_slots.release()
 
     def start_address_switching(self):
-        """Start Java-compatible periodic rotation for the bootstrap connection."""
+        """Start periodic address rotation and idle stream cleanup."""
         self._start_address_switching(self.connection, self.engine.loop if self.engine is not None else None)
+        self._start_idle_cleanup(self.engine.loop if self.engine is not None else None)
 
     def _start_address_switching(self, connection, loop=None):
         connection.on_switch = lambda: self._on_address_switched(connection)
         connection.start_switching(loop)
+
+    def _start_idle_cleanup(self, loop=None):
+        if self._closed or self._idle_task is not None:
+            return
+        loop = loop or asyncio.get_running_loop()
+        self._idle_task = loop.create_task(self._idle_cleanup_loop(), name="polaris-idle-stream-cleanup")
+
+    async def _idle_cleanup_loop(self):
+        interval = self.connection.settings.idle_timeout_seconds
+        while not self._closed:
+            await asyncio.sleep(interval)
+            if self._closed:
+                return
+            await self.close_idle_streams()
+
+    async def close_idle_streams(self):
+        """Close idle Discover streams while retaining shared gRPC channels."""
+        timeout = self.connection.settings.idle_timeout_seconds
+        now = time.monotonic()
+        for key, last_activity in list(self._stream_last_activity.items()):
+            if now - last_activity < timeout:
+                continue
+            lock = self._stream_locks.get(key)
+            if lock is None or lock.locked():
+                continue
+            async with lock:
+                current_activity = self._stream_last_activity.get(key)
+                if current_activity != last_activity or now - current_activity < timeout:
+                    continue
+                stream = self._streams.pop(key, None)
+                self._stream_connections.pop(key, None)
+                self._stream_last_activity.pop(key, None)
+                self._stream_locks.pop(key, None)
+                if stream is not None:
+                    await stream.aclose()
+                if self.logger is not None:
+                    self.logger.info("closed idle Discover stream %s", key)
+
+    async def _stop_idle_cleanup(self):
+        if self._idle_task is not None:
+            self._idle_task.cancel()
+            await asyncio.gather(self._idle_task, return_exceptions=True)
+            self._idle_task = None
 
     async def _on_address_switched(self, connection):
         """Close streams pinned to the old endpoint so the next read reconnects."""
@@ -102,11 +162,13 @@ class GrpcConnector(BaseServerConnector):
                     if self._streams.get(key) is stream:
                         self._streams.pop(key, None)
                         self._stream_connections.pop(key, None)
+                        self._stream_last_activity.pop(key, None)
                     await stream.aclose()
             else:
                 await stream.aclose()
                 self._streams.pop(key, None)
                 self._stream_connections.pop(key, None)
+                self._stream_last_activity.pop(key, None)
 
     async def _connection(self, heartbeat=False):
         system = self.config.get_global().get_system()
@@ -137,16 +199,18 @@ class GrpcConnector(BaseServerConnector):
 
     async def register_instance(self, request: InstanceRegisterRequest) -> InstanceRegisterResponse:
         connection = await self._connection()
-        response = await connection.register_instance(
-            register_request_to_proto(request), auto_heartbeat=request.auto_heartbeat,
-        )
+        async with self._request_slot():
+            response = await connection.register_instance(
+                register_request_to_proto(request), auto_heartbeat=request.auto_heartbeat,
+            )
         ensure_response(response, (ServerCode.ExecuteSuccess, ServerCode.ExistedResource))
         instance_id = response.instance.id.value if response.HasField("instance") else ""
         return InstanceRegisterResponse(instance_id)
 
     async def deregister_instance(self, request: InstanceDeRegisterRequest) -> None:
         connection = await self._connection()
-        response = await connection.deregister_instance(deregister_request_to_proto(request))
+        async with self._request_slot():
+            response = await connection.deregister_instance(deregister_request_to_proto(request))
         ensure_response(response, (ServerCode.ExecuteSuccess, ServerCode.NotFoundResource))
 
     @staticmethod
@@ -174,15 +238,20 @@ class GrpcConnector(BaseServerConnector):
                 stream = connection.discover(discover_request_to_proto(request))
                 self._streams[key] = stream
                 self._stream_connections[key] = connection
+                self._stream_last_activity[key] = time.monotonic()
             try:
-                response = await anext(stream)
+                async with self._request_slot():
+                    response = await anext(stream)
+                self._stream_last_activity[key] = time.monotonic()
             except StopAsyncIteration:
                 self._streams.pop(key, None)
                 self._stream_connections.pop(key, None)
+                self._stream_last_activity.pop(key, None)
                 raise SDKError(ErrorCode.ErrCodeNetworkError, f"Discover stream closed for {request.name}")
             except (asyncio.CancelledError, Exception):
                 self._streams.pop(key, None)
                 self._stream_connections.pop(key, None)
+                self._stream_last_activity.pop(key, None)
                 await stream.aclose()
                 raise
         ensure_response(response)
@@ -197,6 +266,7 @@ class GrpcConnector(BaseServerConnector):
         async with lock:
             stream = self._streams.pop(key, None)
             self._stream_connections.pop(key, None)
+            self._stream_last_activity.pop(key, None)
             try:
                 if stream is not None:
                     await stream.aclose()
@@ -205,12 +275,14 @@ class GrpcConnector(BaseServerConnector):
 
     async def heartbeat(self, request: InstanceHeartbeatRequest) -> None:
         connection = await self._connection(heartbeat=True)
-        response = await connection.heartbeat(heartbeat_request_to_proto(request))
+        async with self._request_slot():
+            response = await connection.heartbeat(heartbeat_request_to_proto(request))
         ensure_response(response)
 
     async def report_client(self, request: ReportClientRequest) -> ReportClientResponse:
         connection = await self._connection()
-        response = await connection.report_client(report_client_to_proto(request))
+        async with self._request_slot():
+            response = await connection.report_client(report_client_to_proto(request))
         ensure_response(response)
         if not response.HasField("client") or not response.client.HasField("location"):
             return ReportClientResponse("", "", "")
@@ -220,19 +292,21 @@ class GrpcConnector(BaseServerConnector):
     async def report_service_contract(self, request):
         """Report the contract over the discovery connection's channel."""
         connection = await self._connection()
-        response = await connection._unary(
-            "ReportServiceContract", contract_request_to_proto(request),
-            timeout_seconds=request.timeout / 1000 if request.timeout else None,
-        )
+        async with self._request_slot():
+            response = await connection._unary(
+                "ReportServiceContract", contract_request_to_proto(request),
+                timeout_seconds=request.timeout / 1000 if request.timeout else None,
+            )
         ensure_response(response)
 
     async def get_service_contract(self, request):
         """Retrieve a contract without adding another discovery cache type."""
         connection = await self._connection()
-        response = await connection._unary(
-            "GetServiceContract", contract_request_to_proto(request),
-            timeout_seconds=request.timeout / 1000 if request.timeout else None,
-        )
+        async with self._request_slot():
+            response = await connection._unary(
+                "GetServiceContract", contract_request_to_proto(request),
+                timeout_seconds=request.timeout / 1000 if request.timeout else None,
+            )
         ensure_response(response)
         if not response.HasField("serviceContract"):
             raise SDKError(ErrorCode.ErrCodeInvalidResponse, "missing service contract response")
@@ -247,10 +321,12 @@ class GrpcConnector(BaseServerConnector):
         if self._closed:
             return
         self._closed = True
+        await self._stop_idle_cleanup()
         streams = list(self._streams.values())
         self._streams.clear()
         self._stream_locks.clear()
         self._stream_connections.clear()
+        self._stream_last_activity.clear()
         for stream in streams:
             try:
                 await stream.aclose()

@@ -76,6 +76,7 @@ def verify(directory):
     config.set_default()
     config.get_global().get_server_connector().addresses = ["offline:8091"]
     config.get_global().get_api().bind_ip = "127.0.0.1"
+    config.get_global().get_admin().port = 0
     config.get_consumer().get_local_cache().persist_dir = str(directory.parent / "polaris" / "backup")
     config.get_consumer().get_local_cache().service_expire_time = 5000
     originals = {}

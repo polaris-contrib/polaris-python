@@ -212,7 +212,7 @@ def main() -> int:
     default_clusters = {
         "discoverCluster": {"namespace": "", "service": "", "refresh_interval_ms": 60000},
         "healthCheckCluster": {"namespace": "", "service": "", "refresh_interval_ms": 60000},
-        "monitorCluster": {"namespace": "Polaris", "service": "polaris.monitor", "refresh_interval_ms": 60000},
+        "monitorCluster": {"namespace": "", "service": "", "refresh_interval_ms": 60000},
     }
     try:
         with verification_directory(__file__) as directory:
@@ -248,9 +248,13 @@ def main() -> int:
                            {**expected, "circuit_breaker": {**rule_expected, "default_rule_enable": False,
                                                           "default_interval_ms": 20000}},
                            {"APP_BREAKER_WINDOW": "20s"})
+            minimal_config = yaml.safe_load((REPO_ROOT / "docs" / "config" / "polaris.yaml").read_text(encoding="utf-8"))
+            minimal_config.setdefault("global", {}).setdefault("admin", {})["port"] = 0
+            minimal_yaml = cwd / "minimal.yaml"
+            minimal_yaml.write_text(yaml.safe_dump(minimal_config), encoding="utf-8")
             verify_success(
-                cwd, "complete configuration reference",
-                ["--config", str(REPO_ROOT / "docs" / "config" / "polaris.yaml"), "--no-env"],
+                cwd, "minimal configuration reference",
+                ["--config", str(minimal_yaml), "--no-env"],
                 {
                     **expected, "connect_timeout_ms": 500, "message_timeout_ms": 1500,
                     "api_timeout_ms": 1000, "max_retry_times": 1,

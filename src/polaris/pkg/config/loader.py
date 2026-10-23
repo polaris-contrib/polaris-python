@@ -29,6 +29,7 @@ from typing import Any
 
 import yaml
 from polaris.pkg.config.stat_reporter import AdminConfig, PrometheusConfig
+from polaris.pkg.config.event import PushGatewayEventConfig
 
 from polaris.pkg.config.api import (
     AIConfig,
@@ -47,6 +48,7 @@ from polaris.pkg.config.api import (
     ServiceRouterConfig,
     StatReporterConfig,
     SystemConfig,
+    EventReporterConfig,
 )
 from polaris.pkg.model.error import ErrorCode, SDKError
 
@@ -73,6 +75,8 @@ _FIELD_ALIASES = {
         "serverconnector": "server_connector",
         "stat_reporter": "stat_reporter",
         "statreporter": "stat_reporter",
+        "event_reporter": "event_reporter",
+        "eventreporter": "event_reporter",
     },
     ConsumerConfig: {
         "load_balance": "load_balance",
@@ -97,6 +101,7 @@ _NESTED_TYPES = {
         "server_connector": ServerConnectorConfig,
         "stat_reporter": StatReporterConfig,
         "admin": AdminConfig,
+        "event_reporter": EventReporterConfig,
     },
     SystemConfig: {
         "discover_cluster": ServerClusterConfig,
@@ -115,6 +120,7 @@ _NESTED_TYPES = {
 
 _DURATION_FIELDS = {
     PrometheusConfig: {"push_interval"},
+    PushGatewayEventConfig: {"push_interval", "retry_interval"},
     ProviderConfig: {"min_register_interval"},
     ServerClusterConfig: {"refresh_interval"},
     APIConfig: {"timeout", "report_interval", "retry_interval"},

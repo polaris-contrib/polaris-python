@@ -14,6 +14,7 @@
 # specific language governing permissions and limitations under the License.
 
 from . import circuit_breaker
+from . import event
 from . import load_balancer
 from . import local_registry
 from . import server_connector
@@ -23,6 +24,7 @@ from .skill import connector
 
 __all__ = [
     "circuit_breaker",
+    "event",
     "load_balancer",
     "local_registry",
     "server_connector",

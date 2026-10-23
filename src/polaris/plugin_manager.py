@@ -28,6 +28,7 @@ class PluginType:
     LOCAL_CACHE = 6
     STAT_REPORTER = 7
     SKILL_CONNECTOR = 8
+    EVENT_REPORTER = 9
 
 
 class EventType:

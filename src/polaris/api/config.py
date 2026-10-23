@@ -36,6 +36,9 @@ class SDKContext(object):
         # 标识是否已经销毁，0未销毁，1已销毁
         self.destroyed = destroyed
         self._cleaned_up = False
+        if context.ContextKeyEventCenter not in self.value_context.core_map:
+            from polaris.pkg.model.event import EventCenter
+            self.value_context.set_value(context.ContextKeyEventCenter, EventCenter(self.value_context))
         add_callback = getattr(self.engine, "add_destroy_callback", None)
         if add_callback is not None:
             add_callback(self._cleanup)
@@ -45,6 +48,9 @@ class SDKContext(object):
             return
         self._cleaned_up = True
         try:
+            event_center = self.get_event_center()
+            if event_center is not None:
+                event_center.close()
             self.plugins.destroy_plugins()
         finally:
             self.value_context.clear()
@@ -87,6 +93,10 @@ class SDKContext(object):
         """Return the unique, stable client ID sent to Polaris."""
         return self.value_context.get_client_id()
 
+    def get_event_center(self):
+        """Return this context's isolated event center."""
+        return self.value_context.core_map.get(context.ContextKeyEventCenter)
+
 
 def init_context_by_file(path: str, apply_env: bool = True, *, log_options: LogOptions | None = None):
     """Initialize an SDK context from a YAML file."""
@@ -118,6 +128,9 @@ def init_context_by_config(config: Configuration, *, log_options: LogOptions | N
     config.verify()
     global_ctx = context.new_value_context()
     global_ctx.logger = ContextLogger(global_ctx.get_client_id(), log_options)
+    from polaris.pkg.model.event import EventCenter
+    event_center = EventCenter(global_ctx)
+    global_ctx.set_value(context.ContextKeyEventCenter, event_center)
     plugins = plugin_manager.DefaultPluginManager.new_context_manager()
     try:
         with use_context_logger(global_ctx.logger):

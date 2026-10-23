@@ -48,6 +48,7 @@ def get_api():
         connector.addresses = [os.getenv("POLARIS_SERVER", "127.0.0.1:8091")]
         connector.token = os.getenv("POLARIS_TOKEN", "")
         config.get_global().get_server_connector().connect_timeout = 2 * 1000
+        config.get_global().get_admin().port = 0
         config.get_consumer().get_local_cache().persist_dir = str(
             demo_backup_directory(__file__, component="wr")
         )

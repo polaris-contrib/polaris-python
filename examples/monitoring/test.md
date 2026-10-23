@@ -46,10 +46,14 @@ POLARIS_SERVICE_TOKEN=<service-token> \
 ./examples/verify_e2e.sh --only monitoring
 ```
 
-真实验证需应用提供可访问的商业注册中心；本次开发没有实际执行此项。
+真实验证需要提供可访问的注册中心和 Pushgateway。
 服务名称使用 polaris-python-e2e-monitoring-<本地时间毫秒>，默认 namespace 为 python-integration。
 POLARIS_TOKEN 是 SDK 接入令牌，与注册请求的 service token 用途不同。
-真实验证启动本机 HTTP echo，等待默认 30 秒聚合，拉取并检查调用指标。
-这两个一次性示例结束时主动反注册并销毁，不保留常驻实例；服务对象与日志仍保留，
-必要时按根目录清理说明处理测试服务。网络失败、索引传播超时、拉取失败、
-指标缺失、metadata 不一致和反注册失败都会导致非零退出码。
+真实验证只使用 Push 模式。Pushgateway 地址取 Polaris 地址的主机名并把端口改为 9091，
+例如 Polaris 为 `1.14.219.4:8091` 时上报到 `http://1.14.219.4:9091`。
+示例完成三次真实调用后等待推送周期，并在 JSON 中输出 `pushes` 成功次数；
+验证器要求 `mode=push`、`calls=3` 且 `pushes>=1`。当前远端 Pushgateway
+只接受上报、不在 `/metrics` 中返回业务序列，因此不使用读回指标作为远程判据。
+示例结束时主动反注册并销毁；服务对象与日志仍保留，必要时按根目录清理说明处理。
+网络失败、索引传播超时、Pushgateway 返回非 2xx、metadata 不一致和反注册失败
+都会导致非零退出码。

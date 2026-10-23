@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+import time
 
 import grpc
 import pytest
@@ -163,6 +164,77 @@ async def test_address_switch_closes_streams_owned_by_connection():
     await asyncio.wait_for(closed.wait(), 1)
     assert connector._streams == {}
     assert connector._stream_connections == {}
+
+
+@pytest.mark.asyncio
+async def test_idle_timeout_closes_discover_stream_but_not_connection():
+    config = Configuration()
+    config.set_default()
+    connector_config = config.get_global().get_server_connector()
+    connector_config.connection_idle_timeout = 100
+    connector_config.server_switch_interval = 101
+    connector = GrpcConnector(InitContext(config=config))
+    closed = asyncio.Event()
+
+    class Stream:
+        async def aclose(self):
+            closed.set()
+
+    request = InstanceDiscoverRequest(1, "svc", "ns")
+    key = connector._stream_key(request)
+    stream = Stream()
+    connector._streams[key] = stream
+    connector._stream_connections[key] = object()
+    connector._stream_locks[key] = asyncio.Lock()
+    connector._stream_last_activity[key] = time.monotonic() - 0.2
+
+    connector._start_idle_cleanup()
+    try:
+        await asyncio.wait_for(closed.wait(), 1)
+        assert connector._streams == connector._stream_connections == {}
+        assert connector._stream_last_activity == {}
+        assert not connector.connection._closed
+    finally:
+        await connector.close()
+    assert connector._idle_task is None
+
+
+@pytest.mark.asyncio
+async def test_request_queue_size_bounds_concurrent_connector_requests():
+    config = Configuration()
+    config.set_default()
+    config.get_global().get_server_connector().request_queue_size = 0
+    connector = GrpcConnector(InitContext(config=config))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    class BlockingConnection:
+        async def register_instance(self, request, auto_heartbeat=False):
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return response_pb2.Response(
+                code={"value": 200000},
+                instance=service_pb2.Instance(id={"value": f"instance-{calls}"}),
+            )
+
+        async def close(self):
+            return None
+
+    connector.connection = BlockingConnection()
+    request = InstanceRegisterRequest("svc", "service-token", "ns", "127.0.0.1", 8080)
+    first = asyncio.create_task(connector.register_instance(request))
+    await asyncio.wait_for(entered.wait(), 1)
+    second = asyncio.create_task(connector.register_instance(request))
+    await asyncio.sleep(0.02)
+    assert calls == 1
+    release.set()
+    first_response, second_response = await asyncio.gather(first, second)
+    assert [first_response.instance_id, second_response.instance_id] == ["instance-1", "instance-2"]
+    assert calls == 2
+    await connector.close()
 
 
 @pytest.mark.asyncio
