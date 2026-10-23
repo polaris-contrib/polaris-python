@@ -4,7 +4,8 @@
 
 Subscribe to events emitted by capabilities actually implemented by this SDK:
 instance cache add/update/delete and local instance circuit-breaker transitions.
-It also verifies the optional Pushgateway reporter. The example does not emit
+The optional Pushgateway reports only the Java event types this SDK emits:
+`InstanceThreadEnd` and circuit-breaker transitions. The example does not emit
 rate-limit, lossless, configuration, or watch events.
 
 ```bash

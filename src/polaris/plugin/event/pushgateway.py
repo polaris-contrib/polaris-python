@@ -27,6 +27,7 @@ from urllib.parse import urlsplit, urlunsplit
 from aiohttp import ClientSession, ClientTimeout
 
 from polaris.pkg.model.context import ContextKeyEventCenter
+from polaris.pkg.model.event import is_remote_reportable
 from polaris.pkg.model.service import GetOneInstanceRequest
 from polaris.plugin_manager import PluginType, register_plugin
 
@@ -72,8 +73,8 @@ class PushGatewayEventReporter:
         self.random = random.Random()
 
     def on_sdk_event(self, event):
-        """Enqueue one event without blocking or affecting SDK control flow."""
-        if not self.enabled or self.closed or self.queue is None:
+        """Enqueue one Java-reportable event without blocking SDK control flow."""
+        if not self.enabled or self.closed or self.queue is None or not is_remote_reportable(event):
             return
         try:
             self.queue.put_nowait(event)
@@ -122,10 +123,28 @@ class PushGatewayEventReporter:
             netloc += f":{url.port}"
         return urlunsplit((url.scheme or "http", netloc, self.config.report_path, "", ""))
 
+    def _log_post(self, level, message, *args):
+        if self.logger is None:
+            return
+        getattr(self.logger, level)(message, *args)
+
+    def _log_post_events(self, level, events, prefix, error=None):
+        """Record one line per event, including the same text as the local event log."""
+        for event in events:
+            detail = event.to_log_message()
+            if error is None:
+                self._log_post(level, "%s: %s", prefix, detail)
+            else:
+                self._log_post(level, "%s: %s: %s", prefix, detail, error)
+
     async def _post(self, events):
         body = json.dumps({"batch": [_event_payload(event) for event in events]},
                           ensure_ascii=False, separators=(",", ":"))
-        target = await self._address()
+        try:
+            target = await self._address()
+        except Exception as error:
+            self._log_post_events("warning", events, "failed to report event to Pushgateway", error)
+            raise
         last_error = None
         for attempt in range(1, self.config.max_retries + 1):
             try:
@@ -134,9 +153,14 @@ class PushGatewayEventReporter:
                     await response.read()
                     if not 200 <= response.status < 300:
                         raise RuntimeError(f"Pushgateway returned HTTP {response.status}")
+                self._log_post_events("info", events, "reported event to Pushgateway")
                 return
             except Exception as error:
                 last_error = error
+                self._log_post_events(
+                    "warning", events,
+                    f"failed to report event to Pushgateway (attempt {attempt}/{self.config.max_retries})",
+                    error)
                 if attempt < self.config.max_retries:
                     await asyncio.sleep(self.config.retry_interval / 1000)
         raise last_error
@@ -153,9 +177,8 @@ class PushGatewayEventReporter:
                 return
             try:
                 await self._post(events)
-            except Exception as error:
-                if self.logger is not None:
-                    self.logger.warning("failed to report %d events to Pushgateway: %s", len(events), error)
+            except Exception:
+                pass
 
     async def close(self):
         """Stop consuming, flush accepted events, and close the HTTP session."""

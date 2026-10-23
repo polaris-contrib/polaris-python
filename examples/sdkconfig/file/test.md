@@ -31,7 +31,7 @@ make -C examples/sdkconfig/file run ARGS="--service demo --namespace default --t
 
 日志由独立 `LogOptions` 管理；`--no-env` 不关闭日志环境变量。
 
-## verify.sh 如何验证
+## 离线验证
 
 验证器为每个 case 建立独立工作目录并运行 `main.py`。成功 case 比较完整 JSON；
 失败 case 要求非零退出并匹配预期错误文本。启动时的 TCP 地址探测、网卡枚举和
@@ -90,18 +90,24 @@ make -C examples/sdkconfig/file run ARGS="--service demo --namespace default --t
 `ReportClient`，但不会向 Polaris 注册服务实例。使用 `--service` 手动运行时也只做
 发现，不注册实例。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不重跑离线的文件查找顺序、占位符缺省值和非法字段。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only sdkconfig/file
 ```
 
-脚本先注册一个 `polaris-python-e2e-sdkconfig-file-<年月日时分秒毫秒>` Provider，host 为 SDK 探测到的
-本机 IP，端口动态分配。随后使用本目录 YAML 和环境覆盖启动 Consumer，通过真实 gRPC
-发现该实例；file demo 不注册业务实例。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-sdkconfig-file-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
-成功效果为 discovery 返回相同 instance ID、配置和 shared context 生效、context 销毁。
-最终 JSON 包含临时 service、Provider 信息和完整 discovery 结果。
-完整规则见[真实服务验证说明](../../README-zh.md#真实服务验证)。
+步骤：
+
+1. quickstart Provider 注册实例。动态端口，host 为建连时的本机 IP，TTL 1 秒，进程保持心跳。
+2. 最多 20 秒，直到不带缓存的发现返回这个 instance id。
+3. 本目录 `main.py` 不传 `--config`，因此读取旁边的 `polaris.yaml`。脚本已经把 `POLARIS_SERVER_ADDRESS` 放进环境，YAML 里的 `${POLARIS_SERVER_ADDRESS:...}` 会变成这次的注册中心。参数还有命名空间、服务名和 `--timeout 5000`。
+4. 发现结果 `discovery.instances[0].id` 必须等于注册得到的 instance id。demo 销毁自己的 context。Provider 仍在运行，验证器不反注册。
+
+通过条件就是这个 ID 相等。离线里的多地址、坏文件和 `POLARIS_CONFIG_FILE` 查找不在这一路。运行目录是 `.logs/verify-e2e-<时间>-<编号>/`，示例输出在 `file.stdout.log`。`./examples/cleanup.sh --force` 停 Provider，`--delete-services` 删服务。

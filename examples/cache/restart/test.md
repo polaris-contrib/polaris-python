@@ -26,7 +26,7 @@ POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=<host>:8091 \
 也可以显式选择其他可保留目录。示例只发现服务，不注册实例。
 远端不可用时，用相同目录再次启动会在首次等待超时后返回合法磁盘快照。
 
-## verify.sh 如何验证
+## 离线验证
 
 验证器先启动一个临时 loopback gRPC 服务，然后运行三个独立子进程阶段：
 
@@ -93,18 +93,31 @@ POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=<host>:8091 \
 手动运行 `make -C examples/cache/restart run ARGS="default demo"` 时只发现已有的 `default/demo`；实例的 host/port
 由目标注册中心返回，不由该 demo 创建。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不杀进程，也不把注册中心停掉再拉起来。它只确认真实发现能落地一份备份。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only cache/restart
 ```
 
-脚本注册一个 `polaris-python-e2e-cache-restart-<年月日时分秒毫秒>` Provider，host 为本机 IP，端口
-动态分配。restart demo 从真实 Polaris 读取服务数据，并将实例快照写入
-`polaris/backup/restart/svc#<namespace>#<service>#instance.json`。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-cache-restart-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
-成功效果是结果 ID 等于 Provider ID、快照文件实际存在、Provider 反注册。最终 JSON
-展示 service、instance ID、host/port、revision 和 `effect`。完整说明见
-[真实服务验证说明](../../README-zh.md#真实服务验证)。
+步骤：
+
+1. quickstart Provider 注册实例。动态端口，host 为建连时的本机 IP，TTL 1 秒，进程保持心跳。
+2. 最多 20 秒，直到不带缓存的发现返回这个 instance id。
+3. 本目录 `main.py` 用环境变量里的注册中心地址做一次异步 `get_instances`，
+   `--metrics-port 0` 让指标监听使用动态端口。持久化目录是这次运行目录下的
+   `polaris/backup/restart`。
+4. 返回的实例 ID 列表必须等于 `[注册得到的 instance id]`。
+5. 该目录下必须存在匹配 `svc#<命名空间>#<服务>#*.json` 的文件。命名空间和服务名里的特殊字符按 URL 编码写进文件名。demo 销毁自己的 context。Provider 仍在运行，验证器不反注册。
+
+统一远端验证明确使用动态指标端口，避免与前面保留运行的 demo 冲突。离线验证里的
+半截临时文件、SIGKILL、磁盘 revision 降级和远端新 revision 不在这一路。
+运行目录是 `.logs/verify-e2e-<时间>-<编号>/`，发现 JSON 在
+`restart.stdout.log`。`./examples/cleanup.sh --force` 停 Provider，
+`--delete-services` 删服务。

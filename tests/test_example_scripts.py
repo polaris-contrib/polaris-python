@@ -116,7 +116,8 @@ def test_scenario_documentation_describes_verification(name):
         assert artifact in documentation_text
     assert "注册服务与实例" in documentation_text
     assert "端口" in documentation_text
-    assert "真实服务端验证" in documentation_text
+    assert "离线验证" in documentation_text
+    assert "远端验证" in documentation_text
     assert "verify_e2e.sh" in documentation_text
     assert "POLARIS_SERVER_ADDRESS" in documentation_text
     assert "POLARIS_SERVICE_TOKEN" in documentation_text

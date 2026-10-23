@@ -32,7 +32,7 @@ make -C examples/multicontext run ARGS="--namespace default --service multiconte
 `--work-dir` 与 `--backup-dir` 是同一参数；默认把 `first/`、`second/` 放在
 `.logs/manual/polaris/backup/`，与 `polaris/log/` 日志同级。
 
-## verify.sh 如何验证
+## 离线验证
 
 验证器启动独立进程执行真实 `main.py`，只替换：
 
@@ -108,18 +108,25 @@ PASS multi-context registration, heartbeat, discovery and independent destructio
 host 为到 registry 建连时使用的本机 IP，端口固定为 `8081` 和 `8082`。使用
 `--first-server`、`--second-server` 可以切换 registry 地址。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC。两个 context 连同一台注册中心，但 clientId、连接、缓存和日志各自独立。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only multicontext
 ```
 
-脚本创建唯一服务 `polaris-python-e2e-multicontext-<年月日时分秒毫秒>`，在
-`python-integration` 注册两个实例：本机探测 IP 的 `8081` 和 `8082`，TTL 3 秒。
-两个 SDK context 使用独立 client ID、channel、cache 和日志。
+脚本把 `POLARIS_FIRST_SERVER` 和 `POLARIS_SECOND_SERVER` 都设成这个地址，两份服务令牌和接入令牌也相同。命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-multicontext-<年月日时分秒毫秒>`。超时 30 秒。
 
-成功效果为两个实例均能发现、心跳持续、销毁第一个后第二个仍可发现、最终两个实例都
-反注册并销毁 context。最终 JSON 包含 service、两个 instance ID、host/port、
-client IDs 和 `effect`。完整规则见[真实服务验证说明](../README-zh.md#真实服务验证)。
+步骤：
+
+1. 第一个 context 注册 host 为本机探测 IP、端口 8081、TTL 3 秒的实例。第二个 context 注册同一 host 的 8082。
+2. 等待 4 秒。两个 context 分别用异步和同步发现，两边的实例列表必须一致。
+3. 反注册并销毁第一个 context。对已销毁 context 调 `check_available` 必须抛 `SDKError`。
+4. 再等 4 秒，第二个 context 继续发现。它自己不能已被销毁。
+5. 打印 JSON 后进程保持运行，所以第二个实例这时还没反注册。
+
+通过条件：两个 `client_ids` 不同，`first_destroyed` 为真，`second_available_after_first_destroy` 为真。JSON 还带 `initial_instances`。离线验证里的 fake channel 和“两个实例最终都反注册”不在这一路；第二个实例要等进程收到 SIGTERM 才在 `finally` 里反注册。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

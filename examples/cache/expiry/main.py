@@ -48,6 +48,7 @@ def main():
     parser.add_argument("service")
     parser.add_argument("--config", help="Path to polaris.yaml; otherwise use environment configuration")
     parser.add_argument("--expire-ms", type=int, default=5000)
+    parser.add_argument("--metrics-port", type=int, default=None)
     args = parser.parse_args()
     if args.expire_ms < 5000:
         parser.error("--expire-ms must be at least 5000")
@@ -58,6 +59,8 @@ def main():
     try:
         config = Configuration.from_file(args.config) if args.config else Configuration.from_env()
         config.set_default()
+        if args.metrics_port is not None:
+            config.get_global().get_admin().port = args.metrics_port
         config.get_consumer().get_local_cache().service_expire_time = args.expire_ms
         config.get_consumer().get_local_cache().persist_dir = str(
             demo_backup_directory(__file__, component="expiry")

@@ -56,8 +56,11 @@ def make_reporter(config):
                                                 plugins=PluginManager())), event_center
 
 
-def event(name=SDKEventName.ON_SERVICE_ADDED):
-    return now_event("client", SDKEventType.INSTANCE, name, client_ip="127.0.0.1",
+def event(name=SDKEventName.INSTANCE_THREAD_END, event_type=None):
+    if event_type is None:
+        event_type = (SDKEventType.CIRCUIT_BREAKING if name.startswith("CircuitBreaker")
+                      else SDKEventType.INSTANCE)
+    return now_event("client", event_type, name, client_ip="127.0.0.1",
                      namespace="ns", service="svc", old_value=None, new_value=object())
 
 
@@ -68,6 +71,17 @@ class FakeEngine:
     async def _async_get_one_instance(self, request):
         assert (request.namespace, request.service) == ("Polaris", "polaris.pushgateway")
         return self.node
+
+
+class RecordingLogger:
+    def __init__(self):
+        self.records = []
+
+    def info(self, message, *args):
+        self.records.append(("info", message % args))
+
+    def warning(self, message, *args):
+        self.records.append(("warning", message % args))
 
 
 async def start_server(handler):
@@ -97,7 +111,8 @@ async def test_pushgateway_batches_events_to_explicit_address():
     try:
         await reporter.start(FakeEngine())
         center.publish(event(SDKEventName.ON_SERVICE_ADDED))
-        center.publish(event(SDKEventName.ON_SERVICE_UPDATED))
+        center.publish(event(SDKEventName.INSTANCE_THREAD_END))
+        center.publish(event(SDKEventName.CIRCUIT_BREAKER_OPEN))
         await asyncio.wait_for(release.wait(), 2)
         await reporter.close()
         assert len(received) == 1
@@ -106,9 +121,11 @@ async def test_pushgateway_batches_events_to_explicit_address():
         assert content_type == "application/json"
         payload = json.loads(body)
         assert [item["event_name"] for item in payload["batch"]] == [
-            SDKEventName.ON_SERVICE_ADDED, SDKEventName.ON_SERVICE_UPDATED,
+            SDKEventName.INSTANCE_THREAD_END, SDKEventName.CIRCUIT_BREAKER_OPEN,
         ]
-        assert payload["batch"][0]["event_type"] == SDKEventType.INSTANCE
+        assert [item["event_type"] for item in payload["batch"]] == [
+            SDKEventType.INSTANCE, SDKEventType.CIRCUIT_BREAKING,
+        ]
         assert payload["batch"][0]["client_id"] == "client"
         assert "old_value" not in payload["batch"][0]
     finally:
@@ -145,6 +162,44 @@ async def test_pushgateway_discovers_address_and_applies_override_host():
 
 
 @pytest.mark.asyncio
+async def test_pushgateway_logs_post_success_and_failure():
+    release = asyncio.Event()
+    calls = []
+
+    async def accept(request):
+        await request.read()
+        calls.append(request.path)
+        if len(calls) == 1:
+            return web.Response(status=503)
+        release.set()
+        return web.Response()
+
+    runner, port = await start_server(accept)
+    config = make_config(address=[f"127.0.0.1:{port}"], push_interval=10,
+                         max_retries=2, retry_interval=1)
+    reporter, center = make_reporter(config)
+    logger = RecordingLogger()
+    reporter.logger = logger
+    try:
+        await reporter.start(FakeEngine())
+        posted = event(SDKEventName.CIRCUIT_BREAKER_OPEN)
+        center.publish(posted)
+        await asyncio.wait_for(release.wait(), 3)
+        await reporter.close()
+        warnings = [text for level, text in logger.records if level == "warning"]
+        infos = [text for level, text in logger.records if level == "info"]
+        detail = posted.to_log_message()
+        assert warnings == [
+            f"failed to report event to Pushgateway (attempt 1/2): {detail}: "
+            "Pushgateway returned HTTP 503",
+        ]
+        assert infos == [f"reported event to Pushgateway: {detail}"]
+    finally:
+        await reporter.close()
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_pushgateway_retries_failed_batch_and_succeeds():
     attempts = []
     release = asyncio.Event()
@@ -171,12 +226,27 @@ async def test_pushgateway_retries_failed_batch_and_succeeds():
         await runner.cleanup()
 
 
+def test_pushgateway_skips_cache_lifecycle_events():
+    config = make_config(event_queue_size=8)
+    reporter, _ = make_reporter(config)
+    reporter.queue = asyncio.Queue(maxsize=8)
+    for name in (SDKEventName.ON_SERVICE_ADDED, SDKEventName.ON_SERVICE_UPDATED,
+                 SDKEventName.ON_SERVICE_DELETED):
+        reporter.on_sdk_event(event(name))
+    reporter.on_sdk_event(event(SDKEventName.CIRCUIT_BREAKER_OPEN, SDKEventType.INSTANCE))
+    reporter.on_sdk_event(event(SDKEventName.INSTANCE_THREAD_END))
+    queued = []
+    while not reporter.queue.empty():
+        queued.append(reporter.queue.get_nowait())
+    assert [item.event_name for item in queued] == [SDKEventName.INSTANCE_THREAD_END]
+
+
 def test_pushgateway_drops_event_when_queue_is_full():
     config = make_config(event_queue_size=1)
     reporter, _ = make_reporter(config)
     reporter.queue = asyncio.Queue(maxsize=1)
     reporter.on_sdk_event(event())
-    reporter.on_sdk_event(event(SDKEventName.ON_SERVICE_UPDATED))
+    reporter.on_sdk_event(event(SDKEventName.CIRCUIT_BREAKER_OPEN))
     assert reporter.queue.qsize() == 1
 
 

@@ -14,7 +14,7 @@ owner loop、模型转换、分片组装、文件写队列、原子替换、读�
 main.py 仅在 POLARIS_E2E=1 时连接指定 Skill 服务；默认只打印启用提示。
 Makefile 提供 build/run/package/clean 目标，参数通过 ARGS 传入。
 
-## 如何验证
+## 离线验证
 
 1. 使用独立 fake Skill stub 返回 namespace/name 与 published v1 版本，并在服务快照挂载 lookup/v1。
 2. 通过 Consumer 获取 agent 服务快照，使用同步 mounted-skill 入口解析挂载版本并读取 SKILL.md。
@@ -47,17 +47,29 @@ polaris/backup/instances 是同 context 的独立实例备份目录，Skill 不�
 真实 Skill 端口通常为 8094；普通发现连接默认 8091，两条连接分别持有。
 POLARIS_SERVICE_TOKEN 是统一 E2E 脚本的前置参数，Skill RPC 使用接入 Token。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不注册临时服务。它只读已经发布的 Skill。发现连接和 Skill 连接是两条，端口通常是同一主机的 8091 和 8094。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
-POLARIS_SKILL_SERVER_ADDRESS=<host>:8094 \
-POLARIS_SKILL_NAME=<已发布名称> \
-POLARIS_SKILL_NAMESPACE=default \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_SKILL_SERVER_ADDRESS=<host>:8094
+export POLARIS_SKILL_NAME=<已发布名称>
+export POLARIS_SKILL_NAMESPACE=default
 ./examples/verify_e2e.sh --only skill
 ```
 
-可指定 POLARIS_SKILL_VERSION 和 POLARIS_SKILL_TOKEN；Token 未指定时使用 POLARIS_TOKEN。
-真实验证仅查询、列举和下载已经发布的 Skill，不上传、发布或删除服务端资源。
-这些 POLARIS_SKILL_* 参数由示例读取，SDK YAML 对应 ai.skill.serverConnector。
+`POLARIS_SKILL_SERVER_ADDRESS` 和 `POLARIS_SKILL_NAME` 缺一不可，否则验证器在启动示例前就失败。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，Skill 连接使用 `POLARIS_TOKEN`。`POLARIS_SERVICE_TOKEN` 仍是脚本的前置参数，但这个场景不会拿它去注册实例。
+
+步骤：
+
+1. 用 `POLARIS_SERVER_ADDRESS` 建发现连接，用 `POLARIS_SKILL_SERVER_ADDRESS` 建 Skill 连接。
+2. `get_skill` 读取指定命名空间和名称的 published 内容。
+3. `download_skill` 把该版本打成 ZIP 下载到本地。
+4. `list_skills` 按同一名称搜索，记录 `total`。
+5. 查询或下载的返回码不是 0 或 200000 时，示例抛出 “the requested published Skill was not found”。
+
+通过条件是标准输出里有一行 JSON，且含 `zip_size`。验证器不检查 ZIP 内容、不对比离线用的 ns/lookup 分片，也不上传、发布或删除服务端 Skill。
+
+运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`skill.stdout.log` 是示例 JSON，`result.json` 的 `exit_code` 为 0 才通过。名称在服务端不存在时非零退出。

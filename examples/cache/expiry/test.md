@@ -25,7 +25,7 @@ POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=<host>:8091 \
 示例要求服务中已存在 `default/demo` 实例。它会发现两次：首次加载，等待闲置淘汰后
 再次加载。`--expire-ms` 最小值是 5000；`--config` 可指定 YAML。
 
-## verify.sh 如何验证
+## 离线验证
 
 验证器构造实例资源，并把 fake stub 注入真实
 `GrpcConnection._stub`。之后：
@@ -81,17 +81,29 @@ POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=<host>:8091 \
 验证器创建 SDK context 和 discover 流，但没有 Provider 注册。手动运行
 `make -C examples/cache/expiry run ARGS="default demo"` 时，服务 `default/demo` 必须已经存在，实例端口由远端返回。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC。它不关闭 Discover 流，也不删除磁盘上的服务备份。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only cache/expiry
 ```
 
-脚本注册一个 `polaris-python-e2e-cache-expiry-<年月日时分秒毫秒>` Provider，host 为本机 IP，端口
-动态分配。expiry demo 只发现该实例，等待 5 秒闲置阈值和真实扫描后重新发现。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-cache-expiry-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
-成功效果是 `initial_ids` 与 `reloaded_ids` 都包含同一 Provider ID，context 销毁，
-cache 写线程结束。最终 JSON 给出 service、instance ID、host/port、淘汰和重载结果。
-完整规则见[真实服务验证说明](../../README-zh.md#真实服务验证)。
+步骤：
+
+1. quickstart Provider 注册实例。动态端口，host 为建连时的本机 IP，TTL 1 秒，进程保持心跳。
+2. 最多 20 秒，直到不带缓存的发现返回这个 instance id。
+3. 本目录 `main.py` 用环境变量里的注册中心地址建 context，`--expire-ms 5000`，
+   `--metrics-port 0` 让 SDK 指标监听使用操作系统动态端口。先发现一次，记下实例 ID。
+4. 等待闲置阈值加上半个扫描间隔，再加 0.5 秒，大约 7.5 秒，然后再次发现。
+5. `initial_ids` 和 `reloaded_ids` 都必须等于 `[注册得到的 instance id]`。demo 销毁自己的 context。Provider 仍在运行，验证器不反注册。
+
+统一远端验证明确使用动态指标端口，避免与前面保留运行的 demo 冲突。离线验证里的
+400301、备份删除和空服务重载不在这一路。运行目录是
+`.logs/verify-e2e-<时间>-<编号>/`，结果在 `expiry.stdout.log`。
+`./examples/cleanup.sh --force` 停 Provider，`--delete-services` 删服务。

@@ -50,6 +50,7 @@ def main():
     parser.add_argument("namespace")
     parser.add_argument("service")
     parser.add_argument("--config", help="Path to polaris.yaml")
+    parser.add_argument("--metrics-port", type=int, default=None)
     parser.add_argument("--persist-dir", type=Path,
                         default=demo_backup_directory(__file__, component="restart"))
     args = parser.parse_args()
@@ -58,6 +59,8 @@ def main():
         return 0
     config = Configuration.from_file(args.config) if args.config else Configuration.from_env()
     config.set_default()
+    if args.metrics_port is not None:
+        config.get_global().get_admin().port = args.metrics_port
     config.get_consumer().get_local_cache().persist_dir = str(args.persist_dir)
     context = init_context_by_config(
         config,

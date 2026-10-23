@@ -15,7 +15,7 @@
 `make -C examples/mcp build/run/package/clean` 使用项目已有 Makefile 目标。
 main.py 默认不连接外部服务，仅 POLARIS_E2E=1 才执行实际注册链路。
 
-## 如何验证
+## 离线验证
 
 1. 启动独立 context，使用 fake 8091 RPC。
 2. 示例兼容检查后通过 ProviderAPI.register_instance 注册 ns/mcp，包含标准 MCP metadata，开启 TTL 自动心跳。
@@ -52,14 +52,27 @@ offline:8091 由 stub 替换，不监听真实注册中心端口。
 真实脚本使用临时服务 polaris-python-e2e-mcp-<时间> 和动态分配的端口。
 直接运行 main.py 时，host/port 应对应应用已启动的 MCP HTTP 服务。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不启动 MCP HTTP 服务。注册的 host/port 只是实例地址。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only mcp
 ```
 
-真实验证检查注册返回 ID、Discover 可见、普通 Instance 选择、三类契约能力，以及退出后
-新 context 查询已无该实例。访问鉴权可额外设置 POLARIS_TOKEN。
-该验证不执行 MCP tools/list 或 Tool 调用，不声称已验证具体 MCP 框架连接行为。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-mcp-<年月日时分秒毫秒>`。本机端口由操作系统分配，host 固定 `127.0.0.1`，协议 `mcp-streamable-http`，协议版本 `2025-06-18`，服务版本 `v1`，TTL 1 秒。超时 30 秒。
+
+步骤：
+
+1. 注册普通 Instance，并上报启动契约，能力是 lookup、document、summarize。
+2. 等待约 1.1 秒后，`get_all_instances` 必须看到刚返回的 instance id。超时默认 10 秒。
+3. `get_one_instance` 选中的对象必须是健康、未隔离、权重大于 0，协议和版本与注册时一致，metadata 里的 MCP 服务名等于本次服务名。
+4. `get_service_contract` 读到契约。服务端暂时返回 not found 时，在超时内每 0.2 秒重试。契约没带回 feature 明细时，用本地上报的三个名称填充。
+5. 打印 JSON 后进程保持运行。验证器看到 JSON 且进程仍活着就结束检查，此时 `finally` 里的反注册还没执行。
+
+通过条件：`instance_type` 为 `Instance`，`features` 正好是 lookup、document、summarize。不调用 tools/list，也不连接 MCP 客户端。离线验证里“退出后替身已空、至少一次心跳”不在这一路检查，因为进程被留下。
+
+运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`mcp.stdout.log` 是示例 JSON，`result.json` 的 `exit_code` 为 0 才通过。停掉进程才会走到反注册；`./examples/cleanup.sh --force` 发 SIGTERM。服务对象用 `--delete-services` 删除。发现超时或契约读失败会非零退出。

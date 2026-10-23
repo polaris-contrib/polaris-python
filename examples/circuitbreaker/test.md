@@ -30,7 +30,7 @@ stub，因此不依赖外部 Polaris。
 Consumer 使用不同规则创建多个 context，包括连续失败、错误率、半开成功数、
 sleep window、默认规则关闭和异步调用。每个 context 使用独立日志与缓存。
 
-## 十个验证场景
+## 离线验证
 
 1. HTTP 200/404 分类与请求 ID：
    Provider 即使在 404 时熔断状态仍保持 `closed`，响应正文中的 request ID 与请求一致。
@@ -113,19 +113,25 @@ registry 地址是 `offline.invalid:8091`，stub 会断言该地址并替代远�
 `127.0.0.1`、port `18081`、TTL 5 秒。Provider 和 Consumer 的默认监听端口都是
 `18081`，同时运行时需给其中至少一个显式传入不同 `--port`。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不跑离线的十个熔断场景。`--only circuitbreaker`、`circuitbreaker/provider` 和 `circuitbreaker/consumer` 是同一套检查，日志落在各自目录。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only circuitbreaker
 ```
 
-脚本创建唯一服务 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>`，注册 1 个真实
-Provider：host `127.0.0.1`、动态端口、TTL 3 秒。Consumer 使用动态本机端口且不注册
-实例。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>`。
 
-效果：真实注册和发现成功，`/echo` 返回 200，实例状态为 `closed`，`/instances`
-包含同一个 Provider ID，最后 Provider 反注册、Consumer 销毁。最终 JSON 包含实际
-服务名、instance ID、host/port、consumer_port、`circuit_state` 和 `effect`。
-完整说明见[真实服务验证说明](../README-zh.md#真实服务验证)。
+步骤：
+
+1. 启动 Provider。`--host 127.0.0.1`，`--port 0`，`--status 200`，`--ttl 3`。它只返回 HTTP 200，进程保持运行并心跳。
+2. 每 0.5 秒用不带缓存的发现确认 instance id，最多 20 秒。
+3. Consumer 监听动态端口。验证器请求 `GET /echo`，要求状态 200、JSON 里 `ret_code` 为 200、`circuit_state` 为 `closed`。
+4. 再请求 `GET /instances`，要求状态 200、只有 1 个实例，且 `instance_id` 等于注册结果。
+5. 两个进程都必须仍在运行。验证器不反注册，也不上报 500 去打开熔断。
+
+通过条件是 `circuit_state` 为 `closed`。JSON 含 service、provider instance id、host、port、`consumer_port`。连续失败、错误率、半开、全死全活和真实 sleep window 只在离线验证里。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

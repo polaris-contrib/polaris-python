@@ -37,7 +37,7 @@ EXAMPLES = REPO / "examples"
 
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 from examples._internal._runtime import record_external_process, verification_directory
-from polaris import Configuration, ConsumerAPI, init_context_by_config
+from polaris import Configuration, ConsumerAPI, SDKEventName, init_context_by_config
 from polaris.api.log import LogOptions
 from polaris.pkg.model.error import SDKError
 from polaris.pkg.model.service import GetInstancesRequest
@@ -361,8 +361,9 @@ def verify_discovery_demo(name, env, address, service_token, namespace):
                            ["--server", address, "--service", "{service}",
                             "--namespace", namespace, "--timeout", "5000"], 30),
         "cache/expiry": (EXAMPLES / "cache/expiry/main.py",
-                         [namespace, "{service}", "--expire-ms", "5000"], 30),
-        "cache/restart": (EXAMPLES / "cache/restart/main.py", [namespace, "{service}"], 30),
+                         [namespace, "{service}", "--expire-ms", "5000", "--metrics-port", "0"], 30),
+        "cache/restart": (EXAMPLES / "cache/restart/main.py",
+                          [namespace, "{service}", "--metrics-port", "0"], 30),
         "loadbalancer/random": (EXAMPLES / "loadbalancer/random/main.py",
                                 [namespace, "{service}", "2", "--interval", "0"], 30),
         "loadbalancer/wr": (EXAMPLES / "loadbalancer/wr/main.py",
@@ -441,6 +442,26 @@ def verify_multicontext(env, address, service_token, namespace):
     }
 
 
+def verify_events(env, address, service_token, namespace):
+    service = service_name("events")
+
+    def effect(service, provider_info):
+        output = run_demo(EXAMPLES / "events/main.py", [
+            "--server", address,
+            "--namespace", namespace,
+            "--service", service,
+            "--metrics-port", "0",
+        ], env, timeout=30)
+        result = last_json(output)
+        if result.get("instances", 0) < 1:
+            raise AssertionError("Events example did not discover the registered provider")
+        if SDKEventName.ON_SERVICE_ADDED not in result.get("events", []):
+            raise AssertionError("Events example did not emit OnServiceAdded")
+        return {"result": result, "effect": "observed OnServiceAdded from the real registry"}
+
+    return with_provider("events", namespace, env, address, service_token, effect)
+
+
 def run_scenario(name, address, service_token, namespace, env):
     aliases = {
         "quickstart/provider": "quickstart",
@@ -455,6 +476,8 @@ def run_scenario(name, address, service_token, namespace, env):
         return verify_circuitbreaker(env, address, service_token, namespace)
     if name == "multicontext":
         return verify_multicontext(env, address, service_token, namespace)
+    if name == "events":
+        return verify_events(env, address, service_token, namespace)
     if name == "mcp":
         service = service_name("mcp")
         port = free_port()

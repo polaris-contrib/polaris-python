@@ -41,7 +41,7 @@ POLARIS_SERVER=<host>:8091 POLARIS_TOKEN= \
 随后打印 `use sync method`，再执行相同次数的同步选择。`--mode` 可选 `default` 和
 `metadata`；`--metadata` 可重复传入 `KEY=VALUE`；`--failover` 仅在 metadata 路由中生效。
 
-## verify.sh 如何验证
+## 离线验证
 
 验证器替换 `GrpcConnection._stub`，保留真实 SDK context、路由插件、缓存线程、负载均衡和
 结果上报 API。fake registry 提供以下实例：
@@ -107,14 +107,24 @@ cache 和锁文件在同级 `polaris/backup/`；所有产物在运行结束后�
 离线验证不向 Polaris 注册业务服务，只从 fake registry 发现上表中的 6 个实例；SDK client 会执行
 `ReportClient` 和调用结果上报。手动运行时，可用实例由目标 Polaris 返回。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不准备离线那 6 个带 metadata 的实例。它只检查默认路由链能否选中刚注册的一个实例。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only servicerouter
 ```
 
-脚本注册一个唯一的动态端口 Provider，并等待实例可见。`servicerouter` demo 使用默认链执行
-两次异步和两次同步选择，共 4 次并上报结果。成功效果为 `selected_calls: 4`，输出包含真实
-Provider host/port、context 销毁和 Provider 反注册。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-servicerouter-<年月日时分秒毫秒>`。demo 超时 30 秒。
+
+步骤：
+
+1. quickstart Provider 注册一个实例。监听动态端口，host 是建连时的本机 IP，TTL 1 秒，进程保持心跳。
+2. 每 0.5 秒用不带缓存的发现确认 instance id，最多 20 秒。
+3. 运行本目录 `main.py`，参数是命名空间、服务名、次数 `2`、`--interval 0`。先异步选择 2 次，再同步选择 2 次。每次选择打印 `host:` 开头的一行，并上报一次成功调用。
+4. 统计 `host:` 行必须是 4 行，而且输出里同时出现 Provider 的 host 和 port。Provider 进程仍须存活。验证器不反注册。
+
+通过条件是 `selected_calls` 为 4。离线的 metadata 匹配、就近路由、全死全活和 6 实例分布不在这一路。`./examples/cleanup.sh --force` 停 Provider，`--delete-services` 删服务。运行目录是 `.logs/verify-e2e-<时间>-<编号>/`，`servicerouter.stdout.log` 是选择输出。

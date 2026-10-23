@@ -38,22 +38,27 @@ SDK 分类日志保存到同级 polaris/log/，实例备份在 polaris/backup/�
 `./examples/cleanup.sh --dry-run` 预览清理，确认后使用 --force。
 清理不会修改源码、card 或 YAML，不会删除管理目录外的显式备份路径。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC。注册中心和监控 Pushgateway 使用同一主机，端口分别是 8091 和 9091。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only monitoring
 ```
 
-真实验证需要提供可访问的注册中心和 Pushgateway。
-服务名称使用 polaris-python-e2e-monitoring-<本地时间毫秒>，默认 namespace 为 python-integration。
-POLARIS_TOKEN 是 SDK 接入令牌，与注册请求的 service token 用途不同。
-真实验证只使用 Push 模式。Pushgateway 地址取 Polaris 地址的主机名并把端口改为 9091，
-例如 Polaris 为 `1.14.219.4:8091` 时上报到 `http://1.14.219.4:9091`。
-示例完成三次真实调用后等待推送周期，并在 JSON 中输出 `pushes` 成功次数；
-验证器要求 `mode=push`、`calls=3` 且 `pushes>=1`。当前远端 Pushgateway
-只接受上报、不在 `/metrics` 中返回业务序列，因此不使用读回指标作为远程判据。
-示例结束时主动反注册并销毁；服务对象与日志仍保留，必要时按根目录清理说明处理。
-网络失败、索引传播超时、Pushgateway 返回非 2xx、metadata 不一致和反注册失败
-都会导致非零退出码。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-monitoring-<年月日时分秒毫秒>`。脚本把 Pushgateway 设为 `<host>:9091`，超时 90 秒。`POLARIS_TOKEN` 只放进 SDK 连接，服务令牌放进注册请求。
+
+步骤：
+
+1. 在 `127.0.0.1` 的动态端口启动 HTTP echo，向注册中心注册，协议 http，TTL 5 秒。指标监听也是动态端口，模式固定为 push，推送间隔用示例默认的 10 秒。
+2. 最多等 40 秒，直到 `get_one_instance` 能看到刚注册的实例。
+3. 对这个实例依次请求 `/echo?status=200`、`503`、`200`。每次调用后 `async_update_service_call_result`：状态码小于 500 记成功，503 记失败。主调服务名是 `demo-caller`。
+4. 再等待默认 31 秒，让至少一个推送周期完成。
+5. 退出时按 instance id 反注册并销毁 context。
+
+通过条件是最后一行 JSON 里 `mode` 为 `push`、`calls` 为 3、`pushes` 至少为 1。远端 Pushgateway 不把这三次调用回显到 `/metrics`，所以不读回指标正文。离线验证里的 pull `/metric` 和 0.1 秒聚合周期不在这一路执行。
+
+运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`console.log` 里有验证器 JSON，`monitoring.stdout.log` 是示例输出，`result.json` 的 `exit_code` 为 0 才通过。Polaris 上的服务对象会留下，用 `./examples/cleanup.sh --delete-services` 删除 `polaris-python-e2e-` 前缀的服务。注册后一直发现不到实例、Pushgateway 非 2xx、或反注册失败，都会非零退出。

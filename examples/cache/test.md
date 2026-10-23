@@ -24,7 +24,7 @@
 
 本目录没有 `main.py`，不提供 `run.sh`。
 
-## 验证特性
+## 离线验证
 
 两个验证都不访问外部 Polaris：
 
@@ -83,23 +83,22 @@ SDK 日志和 `result.json` 写入各自运行目录。这样并发场景不会�
 cache/restart 自己启动的 gRPC 服务使用 `127.0.0.1:0` 动态端口，不注册业务实例。
 手动运行时，`demo` 服务名和实例端口由目标 Polaris 中已有服务决定。
 
-## 真实服务端验证
+## 远端验证
+
+`--only cache` 依次跑 expiry 和 restart。逐步说明在两个子目录的 `test.md`。这一路不替换 gRPC，也不做离线的假 Discover 流、SIGKILL 和注册中心中断。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only cache
+./examples/verify_e2e.sh --only expiry
 ```
 
-expiry 和 restart 分别创建唯一的动态端口 Provider，并由 cache demo 发现，不注册
-业务实例。expiry 等待真实闲置阈值后重载同一实例；restart 从真实注册中心获取快照并
-写入 `polaris/backup/restart/`。
+两个场景都先用 quickstart Provider 注册一个 TTL 1 秒的实例，动态端口，host 为建连时的本机 IP，并等到发现能看到该 instance id。Provider 保持运行，验证器不反注册。命名空间默认 `python-integration`。
 
-效果：
+expiry 把闲置阈值设为 5 秒，第一次发现后再等扫描周期，第二次发现的实例 ID 必须和第一次、以及注册 ID 相同。不关闭 Discover 流，也不删除磁盘备份。
 
-- expiry 的 `initial_ids` 和 `reloaded_ids` 均包含临时 Provider ID；
-- restart 的结果包含同一 Provider ID，且 backup 中存在对应快照；
-- Provider 最后反注册，context 和写线程关闭。
+restart 只发现一次，结果 ID 必须等于注册 ID，并且运行目录 `polaris/backup/restart/` 里要有 `svc#<命名空间>#<服务>#*.json`。不杀进程，也不把注册中心停掉再恢复。
 
-可用 `--only expiry` 或 `--only restart`。完整说明见
-[真实服务验证说明](../README-zh.md#真实服务验证)。
+这两个 demo 传入 `--metrics-port 0`，指标监听使用操作系统动态端口。日志在各子目录 `.logs/verify-e2e-<时间>-<编号>/`。`./examples/cleanup.sh --force` 停 Provider，`--delete-services` 删服务。

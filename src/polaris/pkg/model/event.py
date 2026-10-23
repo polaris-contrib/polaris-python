@@ -44,6 +44,20 @@ class SDKEventStatus:
     HALF_OPEN = "HALF_OPEN"
 
 
+# Java EventConstants pairs this SDK can emit. Cache lifecycle names stay local.
+_REMOTE_EVENT_KEYS = frozenset({
+    (SDKEventType.INSTANCE, SDKEventName.INSTANCE_THREAD_END),
+    (SDKEventType.CIRCUIT_BREAKING, SDKEventName.CIRCUIT_BREAKER_OPEN),
+    (SDKEventType.CIRCUIT_BREAKING, SDKEventName.CIRCUIT_BREAKER_HALF_OPEN),
+    (SDKEventType.CIRCUIT_BREAKING, SDKEventName.CIRCUIT_BREAKER_CLOSE),
+})
+
+
+def is_remote_reportable(event) -> bool:
+    """Return whether Java EventReporter would accept this event type and name."""
+    return (event.event_type, event.event_name) in _REMOTE_EVENT_KEYS
+
+
 @dataclass(frozen=True)
 class SDKEvent:
     """One immutable event emitted by an implemented SDK capability."""

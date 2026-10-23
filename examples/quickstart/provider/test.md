@@ -39,7 +39,7 @@ export POLARIS_TOKEN=<access-token>
 
 quickstart 入口不检查 `POLARIS_E2E`；设置它不会改变该 demo 的行为。
 
-## verify.sh 如何验证
+## 离线验证
 
 `verify.sh` 通过共享管理程序定位父级 `quickstart/verify.py`。验证器：
 
@@ -95,18 +95,24 @@ quickstart 入口不检查 `POLARIS_E2E`；设置它不会改变该 demo 的行�
 Provider host 是连接到 Polaris gRPC 地址时取得的本机 IP。Consumer 在本验证中不注册
 业务实例。
 
-## 真实服务端验证
+## 远端验证
+
+`--only quickstart/provider` 不只跑 Provider。它和父目录跑同一套场景：本目录注册，父目录 Consumer 调用。日志写在本目录的 `.logs/verify-e2e-<时间>-<编号>/`。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only quickstart/provider
 ```
 
-该入口运行完整 quickstart 真实场景，在本目录创建独立运行目录。它会注册一个临时
-Provider，服务名为 `polaris-python-e2e-quickstart-<年月日时分秒毫秒>`，host 为本机可注册 IP，
-端口为动态端口；同时启动一个不注册实例的 Consumer。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-quickstart-<年月日时分秒毫秒>`。
 
-预期效果为真实注册、发现、HTTP 200、Provider 反注册和 Consumer 销毁。最终 JSON
-给出实际 service、instance ID、host、Provider/Consumer 端口和 `effect`。
-完整规则见[真实服务验证说明](../../README-zh.md#真实服务验证)。
+步骤：
+
+1. 本目录 `main.py` 读旁边的 `polaris.yaml`，`${POLARIS_SERVER_ADDRESS}` 换成上面的地址。监听 `0.0.0.0` 的动态端口，注册 host 取建连时的本机 IP，TTL 1 秒，协议 http，版本 `1.0.0`。
+2. 打印 `instance_id` 后进程继续心跳。验证器每 0.5 秒发现一次，最多 20 秒，直到列表里有这个 id。
+3. 启动 Consumer，验证器请求它的 `/echo`。Consumer 必须从注册中心发现到这个 host 和 port，并拿到 HTTP 200，正文含服务名。
+4. 两个进程保持运行。验证器不反注册。
+
+通过条件是 `http_status` 为 200。JSON 含 service、instance id、host、Provider 端口和 Consumer 端口。离线验证使用的 fake id `quickstart-provider` 和退出反注册不在这一路。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

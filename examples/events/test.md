@@ -14,7 +14,7 @@ console.log、result.json 与 verification.log。`make -C examples/events run AR
 `on_sdk_event(event)` 的对象，也可按 `SDKEventType.INSTANCE` 或
 `SDKEventType.CIRCUIT_BREAKING` 过滤。监听器抛出的异常只记录 warning，不影响发现或熔断主流程。
 
-## 如何验证
+## 离线验证
 
 1. fake gRPC 返回 ns/svc 的一个健康实例，首次发现触发 `OnServiceAdded`。
 2. 修改 revision 后执行后台刷新任务，本地缓存触发 `OnServiceUpdated`。
@@ -26,9 +26,10 @@ console.log、result.json 与 verification.log。`make -C examples/events run AR
    `CircuitBreakerClose`。
 6. 关闭 Discover 流后让服务端返回 400301，本地缓存删除资源，触发
    `OnServiceDeleted`。
-7. 启用 `global.eventReporter` 和 pushgateway 插件，事件批量 POST 到本地
-   `/polaris/client/events`；最终断言远端收到相同 6 个事件序列。
-8. 最终断言完整序列只有这 6 个事件，没有限流、无损、配置或 watch 事件。
+7. 启用 `global.eventReporter` 和 pushgateway 插件，可上报事件批量 POST 到本地
+   `/polaris/client/events`。远端只收到 `CircuitBreakerOpen`、`CircuitBreakerHalfOpen`、
+   `CircuitBreakerClose`，且 `event_type` 为 `CIRCUIT_BREAKING`。缓存新增、更新和删除不上报。
+8. 最终断言本地完整序列只有这 6 个事件，没有限流、无损、配置或 watch 事件。
 9. 销毁 context 后检查事件监听器清空，owner loop 和写线程停止。
 
 默认日志监听器把事件写入本 context 的 `event` 分类文件；业务监听器只保存事件名，
@@ -39,24 +40,34 @@ console.log、result.json 与 verification.log。`make -C examples/events run AR
 
 每次运行保存 `.logs/verify-<时间>-<编号>/console.log`、result.json 和 verification.log。
 console.log 输出 `events=passed` 和 6 个事件名；result.json 的 exit_code 为 0 才通过。
-polaris/log/event/ 保存本地事件日志；Pushgateway 上报失败时才会出现 warning。
+polaris/log/event/ 同时保存本地事件和 Pushgateway POST 结果。POST 成功是 info，失败是 warning，两行都带该事件的本地日志正文。
 polaris/log/event/ 保存事件日志，polaris/backup/ 保存实例备份，运行结束不主动删除。
 
 ## 注册服务与实例
 
-离线验证使用 ns/svc 和 event-node 实例，不连接外部服务。真实入口需要
-`POLARIS_E2E=1`，默认服务为 default/DiscoverEchoServer；若注册中心要求鉴权，设置
+离线验证使用 ns/svc 和 event-node 实例，不连接外部服务。手工真实入口需要
+`POLARIS_E2E=1`，默认服务为 default/DiscoverEchoServer；统一远端脚本会注册
+`polaris-python-e2e-events-<时间>` 并显式传入。若注册中心要求鉴权，设置
 `POLARIS_TOKEN`。真实入口只验证首次发现事件的订阅链路，不伪造服务端删除或熔断错误。
 
 监控端口使用操作系统临时端口，避免多个示例同时运行时冲突。事件示例不注册业务实例，
 也不调用外部 Agent 或 MCP 客户端。
 
-## 真实服务端验证
+## 远端验证
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 POLARIS_SERVICE_TOKEN=<service-token> \
-POLARIS_E2E=1 ./examples/verify_e2e.sh --only events
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+./examples/verify_e2e.sh --only events
 ```
 
-真实环境需要 default/DiscoverEchoServer 已有可发现实例。若要观察更新和删除事件，
-需要在服务端修改或删除该服务实例。熔断事件需要业务持续上报 500-599 或 -1 调用结果。
+验证器会先注册一个唯一命名的 quickstart Provider，等待真实注册中心返回该实例，
+再运行 `events/main.py`，使用动态指标端口发现该服务。通过条件是：
+
+- JSON 结果的 `instances` 至少为 1；
+- `events` 包含首次发现产生的 `OnServiceAdded`；
+- quickstart Provider 在验证期间保持运行。
+
+远端这一路验证真实注册、发现和事件订阅链路；实例更新、删除、熔断状态转换以及
+事件 Pushgateway 上报仍由离线验证覆盖。运行目录是
+`.logs/verify-e2e-<时间>-<编号>/`，demo JSON 保存在 `events.stdout.log`。

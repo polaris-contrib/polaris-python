@@ -137,8 +137,12 @@ async def verify():
                         SDKEventName.CIRCUIT_BREAKER_CLOSE, SDKEventName.ON_SERVICE_DELETED]
             assert events == expected
             await asyncio.sleep(0.05)
-            pushed_names = [item["event_name"] for batch in pushed for item in batch["batch"]]
-            assert pushed_names == expected
+            reported = [item for batch in pushed for item in batch["batch"]]
+            assert [item["event_name"] for item in reported] == [
+                SDKEventName.CIRCUIT_BREAKER_OPEN, SDKEventName.CIRCUIT_BREAKER_HALF_OPEN,
+                SDKEventName.CIRCUIT_BREAKER_CLOSE,
+            ]
+            assert {item["event_type"] for item in reported} == {SDKEventType.CIRCUIT_BREAKING}
             result = {"events": "passed", "sequence": events}
             print(json.dumps(result), flush=True)
             return result

@@ -71,7 +71,7 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 
 | 字段 | 类型 / 格式 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `enable` | bool | `false` | 开启远端事件上报；本地 event 日志始终保留。 |
+| `enable` | bool | `false` | 开启远端事件上报。只发送 Java 已定义且本 SDK 已实现的 `InstanceThreadEnd` 与熔断事件；缓存生命周期事件和本地 event 日志始终保留。 |
 | `chain` | `list[string]` | `[pushgateway]` | 当前仅支持 pushgateway。 |
 | `plugin.pushgateway.address` | `list[string]` | `[]` | Pushgateway 地址；为空时通过 namespace/service 发现。 |
 | `plugin.pushgateway.eventQueueSize` | int，>0 | `1000` | 内存事件队列容量。 |

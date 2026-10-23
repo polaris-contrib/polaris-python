@@ -29,7 +29,7 @@
 ./examples/verify.sh --only loadbalancer/random,loadbalancer/wr
 ```
 
-## 验证方式
+## 离线验证
 
 两个验证器都使用真实 SDK 插件、真实 context、缓存写线程和结果上报 API，只替换注册
 中心的 discover/report RPC：
@@ -79,17 +79,18 @@ wr 验证加权插件能够在这组权重下完成真实选择并正确上报�
 实例 ID 使用端口字符串。SDK client 会执行 `ReportClient` 和调用结果上报，但不会注册
 业务服务。手动运行时，服务名以及可用实例端口由目标 Polaris 返回。
 
-## 真实服务端验证
+## 远端验证
+
+`--only loadbalancer` 依次跑 random 和 wr。两个子目录的 `test.md` 写了各自的逐步说明。这一路不替换 gRPC，也不使用离线的两个固定权重实例。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only loadbalancer
+./examples/verify_e2e.sh --only random
 ```
 
-random 和 wr 各自注册一个唯一的动态端口 Provider，再由对应负载均衡 demo 发现和选择。
-两者都不注册业务实例。每个场景执行异步 2 次、同步 2 次，共 4 次选择并上报。
+每个子场景单独注册一个 Provider：动态端口，host 是建连时的本机 IP，TTL 1 秒。等发现能看到该 instance id 后，demo 以次数 2、间隔 0 做 2 次异步选择和 2 次同步选择。通过条件都是输出里有 4 行 `host:`，并且含这次 Provider 的 host 和 port。`selected_calls` 为 4。
 
-成功效果为 `selected_calls: 4`、输出包含真实 Provider host/port、Provider 反注册。
-可用 `--only random` 或 `--only wr`。完整说明见
-[真实服务验证说明](../README-zh.md#真实服务验证)。
+不检查 40 次分布，也不要求 30/10 或 20/20。Provider 保持运行，验证器不反注册。服务名分别是 `polaris-python-e2e-loadbalancer-random-<时间>` 和 `polaris-python-e2e-loadbalancer-wr-<时间>`，命名空间默认 `python-integration`。日志在各子目录的 `.logs/verify-e2e-<时间>-<编号>/`。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

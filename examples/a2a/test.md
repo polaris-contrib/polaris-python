@@ -38,18 +38,25 @@ SDK 分类日志保存到同级 polaris/log/，实例备份在 polaris/backup/�
 `./examples/cleanup.sh --dry-run` 预览清理，确认后使用 --force。
 清理不会修改源码、card 或 YAML，不会删除管理目录外的显式备份路径。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC，也不启动 Agent HTTP 服务。card 里的地址只作为实例 metadata。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only a2a
 ```
 
-真实验证需应用提供可访问的商业注册中心；本次开发没有实际执行此项。
-服务名称使用 polaris-python-e2e-a2a-<本地时间毫秒>，默认 namespace 为 python-integration。
-POLARIS_TOKEN 是 SDK 接入令牌，与注册请求的 service token 用途不同。
-真实验证注册普通 A2A 元数据，检查发现结果，不调用实际 Agent。
-这两个一次性示例结束时主动反注册并销毁，不保留常驻实例；服务对象与日志仍保留，
-必要时按根目录清理说明处理测试服务。网络失败、索引传播超时、拉取失败、
-指标缺失、metadata 不一致和反注册失败都会导致非零退出码。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-a2a-<年月日时分秒毫秒>`。超时 90 秒。
+
+步骤：
+
+1. 读取本目录 `agent-card.json`，用普通 `InstanceRegisterRequest` 注册。metadata 带 `ai-agent-name`、`a2a.agent.card`、`a2a.transport`、`a2a.path`。host 和 port 来自 card，默认 `127.0.0.1:8080`，这个端口上没有 Agent 进程。
+2. 从注册中心发现该服务，检查返回的 transport。
+3. 示例进程退出前显式反注册并销毁 context。
+
+通过条件是最后一行 JSON 的 `transport` 为 `JSONRPC`，并且 `instances` 至少为 1。验证器不发 JSON-RPC 请求，也不检查心跳次数。离线验证里“等待 5.2 秒确认至少一次心跳、反注册后替身为空”不在这一路重复。
+
+运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`a2a.stdout.log` 是示例输出，`result.json` 的 `exit_code` 为 0 才通过。服务对象留在 Polaris 上，用 `./examples/cleanup.sh --delete-services` 删除。发现失败、metadata 写不进去或反注册失败都会非零退出。

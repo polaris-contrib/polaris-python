@@ -31,7 +31,7 @@ Consumer 提供：
 真实远端运行需要设置 `POLARIS_E2E=1` 和
 `POLARIS_SERVER_ADDRESS=<host>:8091`；Consumer 还需要可发现的 Provider。
 
-## 验证如何工作
+## 离线验证
 
 父级验证器用 fake registry RPC 提供两个实例，但真实运行 Consumer：
 
@@ -84,18 +84,25 @@ Consumer 不注册业务服务实例，只创建 SDK context 并发现以下实�
 Consumer 会发送 client/report 数据并上报调用结果，但不会在 Polaris 创建业务实例。
 默认 `18081` 与 Provider 默认端口相同；同机同时运行时应显式选择不同端口。
 
-## 真实服务端验证
+## 远端验证
+
+`--only circuitbreaker/consumer` 和父目录跑同一套场景，日志写在本目录 `.logs/verify-e2e-<时间>-<编号>/`。不跑离线的十个熔断场景。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only circuitbreaker/consumer
 ```
 
-验证自动注册一个动态端口的 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>` Provider，
-并启动动态本机端口的 Consumer。Consumer 不注册实例，但会从真实注册中心发现、调用、
-上报结果并销毁 context。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>`。
 
-成功效果为 HTTP 200、`circuit_state: closed`、Provider 反注册。最终 JSON 展示
-实际 instance ID、host/port、consumer_port 和 `effect`。完整说明见
-[真实服务验证说明](../../README-zh.md#真实服务验证)。
+步骤：
+
+1. 父目录 Provider 以 `127.0.0.1`、动态端口、HTTP 200、TTL 3 秒注册，并保持心跳。
+2. 最多 20 秒，直到不带缓存的发现看到这个 instance id。
+3. 本目录 Consumer 监听动态端口，自己不注册实例。验证器请求 `/echo`，要求 HTTP 200、`ret_code` 200、`circuit_state` 为 `closed`。
+4. `/instances` 必须只有这一个实例，且 id 与注册结果相同。
+5. 两个进程保持运行。验证器不上报失败，也不反注册。
+
+通过条件是 `circuit_state` 为 `closed`。半开和错误率只在离线验证。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

@@ -38,7 +38,7 @@
 `code` 和 `file` 共用这个验证器，管理程序分别传入 `--only code` 和
 `--only file`，所以不会重复运行无关场景。
 
-## 验证覆盖
+## 离线验证
 
 `file` 场景覆盖：
 
@@ -101,17 +101,21 @@
 `127.0.0.1:8091`，部分 case 使用 `127.0.0.2:8091`、`127.0.0.3:8092` 等模拟地址，
 用于检查环境变量和配置优先级；这些都不是实际注册的服务实例。
 
-## 真实服务端验证
+## 远端验证
+
+`--only sdkconfig` 依次跑 code 和 file。离线那一组 YAML 优先级、占位符和非法超时不在这一路重复。两个子目录的 `test.md` 写了逐步说明。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only sdkconfig
+./examples/verify_e2e.sh --only code
 ```
 
-汇总脚本依次运行 code 和 file 两个真实服务场景。每个场景先注册一个唯一的动态端口
-Provider，再由对应配置方式启动 Consumer 发现该实例。成功效果为两个配置入口都能从
-真实 Polaris 返回相同 instance ID。
+每个子场景先用 quickstart Provider 注册一个 TTL 1 秒的实例，动态端口，host 为建连时的本机 IP，并等到发现能看到该 instance id。然后：
 
-可用 `--only code` 或 `--only file` 单独执行。最终 JSON 包含临时 service、Provider
-实例以及各自的 discovery 结果。完整环境变量见[真实服务验证说明](../README-zh.md#真实服务验证)。
+- code 用 `--server <POLARIS_SERVER_ADDRESS>` 在代码里填地址，超时 5000 毫秒，发现该服务。
+- file 不传 `--server`，读 `file/polaris.yaml`，由环境变量 `POLARIS_SERVER_ADDRESS` 覆盖地址，超时同样 5000 毫秒。
+
+两边都只断言发现结果的第一个实例 ID 等于刚注册的 ID。两个场景的服务名不同，分别是 `polaris-python-e2e-sdkconfig-code-<时间>` 和 `polaris-python-e2e-sdkconfig-file-<时间>`，命名空间默认 `python-integration`。Provider 保持运行，验证器不反注册。日志在各子目录 `.logs/verify-e2e-<时间>-<编号>/`。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

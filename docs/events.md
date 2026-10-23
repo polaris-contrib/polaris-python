@@ -43,19 +43,31 @@ print(events)  # first successful discovery emits OnServiceAdded
 实例 ID、host、port、前后状态和 `additional["isolation_object"]`。当前本地规则没有远端
 规则名，因此 `rule_name` 保持空字符串，不伪造规则信息。
 
-默认 logger 监听器会把事件写入每个 context 的 `event` 分类日志；远端上报由可选的
-Pushgateway 插件完成。
+默认 logger 监听器会把事件写入每个 context 的 `event` 分类日志。远端上报由可选的
+Pushgateway 插件完成，只包含 Java `EventConstants` 中本 SDK 已实现的类型和名称。
 
 ## Pushgateway 上报
 
 `global.eventReporter.enable=true` 时启用 `pushgateway` 插件。插件作为当前 context 的
-事件监听器工作，事件先进入容量为 `eventQueueSize` 的内存队列；队列满时丢弃新事件并记录
+事件监听器工作，但只入队 Java 会上报的事件：
+
+| `event_type` | `event_name` |
+| --- | --- |
+| `INSTANCE` | `InstanceThreadEnd` |
+| `CIRCUIT_BREAKING` | `CircuitBreakerOpen`、`CircuitBreakerHalfOpen`、`CircuitBreakerClose` |
+
+`OnServiceAdded`、`OnServiceUpdated`、`OnServiceDeleted` 只留在本地事件中心和 event
+日志。限流、无损和配置事件本 SDK 不产生，因此也不会上报。
+
+可上报事件先进入容量为 `eventQueueSize` 的内存队列；队列满时丢弃新事件并记录
 warning。后台任务每 `pushInterval` 批量 POST，一次最多 `maxBatchSize` 个事件。
 
 请求路径默认为 `/polaris/client/events`，JSON body 为 `{"batch":[...]}`。显式
 `address` 优先；为空时通过 `namespace/service` 服务发现 Pushgateway 实例，
-`overrideHost` 可只替换选中地址的 host。HTTP 非 2xx 或网络错误按 `maxRetries` /
-`retryInterval` 重试，最终失败丢弃该批并记录 warning，不影响 SDK 主流程。context
+`overrideHost` 可只替换选中地址的 host。每次 POST 都按事件写入同一个 `event` 日志：成功为
+info，失败为 warning。每行带该事件的本地日志正文，因此可以用同一段
+`event_type|event_name|timestamp|...` 对上是哪一条事件。HTTP 非 2xx 或网络错误按
+`maxRetries` / `retryInterval` 重试，最终失败丢弃该批，不影响 SDK 主流程。context
 销毁前会停止接收新事件并 flush 已接受事件。
 
 完整字段见 [配置参数说明](config/configuration-reference.md)。默认 `global.eventReporter.enable=false`，

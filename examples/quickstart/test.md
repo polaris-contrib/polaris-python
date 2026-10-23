@@ -17,7 +17,7 @@ gRPC stub 边界，因此不需要外部 Polaris 服务。
 本目录没有 `main.py`，所以不提供 `run.sh`。需要直接运行示例时进入
 `provider/` 或 `consumer/`。
 
-## 验证如何执行
+## 离线验证
 
 验证器在一个隔离目录中启动两个 Python 子进程：
 
@@ -111,19 +111,26 @@ Provider 和 Consumer 的两个实际 HTTP 端口都可在 JSON 输出的 `port`
 Provider host 是到注册中心建连时使用的本机 IP。Consumer 默认监听 `18080`，它不注册
 实例，只发现 Provider。
 
-## 真实服务端验证
+## 远端验证
+
+这一路不替换 gRPC。`--only quickstart`、`--only quickstart/provider` 和 `--only quickstart/consumer` 跑的是同一套完整场景，日志分别落在对应目录。
 
 ```bash
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-POLARIS_SERVICE_TOKEN=<service-token> \
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only quickstart
 ```
 
-脚本自动创建唯一服务 `polaris-python-e2e-quickstart-<年月日时分秒毫秒>`，在
-`python-integration` 注册 1 个 Provider。Provider 使用动态端口，host 为 SDK 探测到的
-本机 IP；Consumer 使用动态本机 HTTP 端口且不注册实例。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-quickstart-<年月日时分秒毫秒>`。
 
-验证效果：Provider 注册成功、Consumer 从真实注册中心发现实例、`GET /echo` 返回 200，
-Provider 最后反注册并销毁 context。成功输出 JSON 含 service、provider instance ID、
-host、port、consumer_port、`http_status: 200` 和 `effect`。详细说明见
-[真实服务验证说明](../README-zh.md#真实服务验证)。
+步骤：
+
+1. 启动 `provider/main.py`。它读旁边的 `polaris.yaml`，地址占位符换成 `POLARIS_SERVER_ADDRESS`。HTTP 监听 `0.0.0.0` 的动态端口，注册 host 是连上注册中心时选出的本机 IP，TTL 1 秒，协议 http。打印 `instance_id`、`host`、`port` 后进程保持运行并继续心跳。
+2. 另起 SDK context，每 0.5 秒用不带缓存的发现探测，连接超时 2 秒、API 超时 3 秒，最多 20 秒。返回列表里出现同一个 instance id 才继续。
+3. 在动态本机端口启动 Consumer。验证器自己请求 `http://127.0.0.1:<consumer端口>/echo`，最多 10 秒。Consumer 再去发现并调用 Provider。
+4. 两个进程这时都必须还活着。验证器不反注册，也不销毁它们。
+
+通过条件：HTTP 状态 200，响应正文包含本次服务名。JSON 含 `service`、`provider.instance_id`、`provider.host`、`provider.port`、`consumer_port`、`http_status` 和 `effect`。离线验证里的显式反注册、心跳次数和 fake instance id `quickstart-provider` 不在这一路检查。
+
+运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`result.json` 的 `exit_code` 为 0 才通过。停进程用 `./examples/cleanup.sh --force`；删 Polaris 服务用 `--delete-services`。发现超时或 `/echo` 不是 200 会非零退出。
