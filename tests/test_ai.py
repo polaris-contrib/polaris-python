@@ -221,10 +221,15 @@ async def test_public_service_list_watch_filters_events_and_pins_cache(runtime):
     watch = await consumer.async_watch_service(request, events.append)
     assert isinstance(watch, ServiceWatch)
     cache_key = ServiceEventKey("ns", "mcp", EventType.Instance)
-    cache_obj = context.get_engine().registry.service_map[cache_key]
-    cache_obj.last_visit_time = 0
-    await context.get_engine().registry.expire_services()
-    assert context.get_engine().registry.service_map.get(cache_key) is cache_obj
+    engine = context.get_engine()
+    cache_obj = engine.registry.service_map[cache_key]
+
+    async def expire():
+        cache_obj.last_visit_time -= 2 * 24 * 60 * 60
+        return await engine.registry.expire_services()
+
+    assert await engine._run_async(expire()) == []
+    assert engine.registry.service_map.get(cache_key) is cache_obj
 
     event_center = context.get_event_center()
     event_center.publish(now_event(
@@ -244,9 +249,8 @@ async def test_public_service_list_watch_filters_events_and_pins_cache(runtime):
 
     watch.close()
     assert watch._closed
-    cache_obj.last_visit_time = 0
-    await context.get_engine().registry.expire_services()
-    assert context.get_engine().registry.service_map.get(cache_key) is None
+    assert await engine._run_async(expire()) == [cache_key]
+    assert engine.registry.service_map.get(cache_key) is None
 
 
 def test_route_rule_sync_and_async_names_are_explicit(runtime):
