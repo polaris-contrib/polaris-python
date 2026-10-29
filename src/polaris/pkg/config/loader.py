@@ -42,6 +42,7 @@ from polaris.pkg.config.api import (
     GlobalConfig,
     LoadBalancerConfig,
     LocalCacheConfig,
+    LosslessConfig,
     ProviderConfig,
     ServerClusterConfig,
     ServerConnectorConfig,
@@ -49,6 +50,7 @@ from polaris.pkg.config.api import (
     StatReporterConfig,
     SystemConfig,
     EventReporterConfig,
+    WeightAdjustConfig,
 )
 from polaris.pkg.model.error import ErrorCode, SDKError
 
@@ -113,7 +115,9 @@ _NESTED_TYPES = {
         "service_router": ServiceRouterConfig,
         "load_balance": LoadBalancerConfig,
         "circuit_breaker": CircuitBreakerConfig,
+        "weight_adjust": WeightAdjustConfig,
     },
+    ProviderConfig: {"lossless": LosslessConfig},
     AIConfig: {"skill": SkillConfig},
     SkillConfig: {"server_connector": SkillConnectorConfig},
 }
@@ -122,6 +126,7 @@ _DURATION_FIELDS = {
     PrometheusConfig: {"push_interval"},
     PushGatewayEventConfig: {"push_interval", "retry_interval"},
     ProviderConfig: {"min_register_interval"},
+    LosslessConfig: {"delay_register_interval", "health_check_interval"},
     ServerClusterConfig: {"refresh_interval"},
     APIConfig: {"timeout", "report_interval", "retry_interval"},
     ServerConnectorConfig: {

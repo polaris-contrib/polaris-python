@@ -20,12 +20,14 @@ from polaris.api.config import (
     init_context_by_file,
     init_context_by_stream,
 )
-from polaris.api.consumer import ConsumerAPI, create_consumer_by_config, create_consumer_by_file
+from polaris.api.consumer import ConsumerAPI, ServiceWatch, create_consumer_by_config, create_consumer_by_file
 from polaris.api.log import LogOptions
+from polaris.api.lossless import LosslessAPI
 from polaris.api.provider import ProviderAPI, create_provider_by_config, create_provider_by_file
 from polaris.api.skill import SkillAPI, create_skill_by_config, create_skill_by_file
 from polaris.pkg.model.service import Instance
 from polaris.pkg.model.event import EventCenter, SDKEvent, SDKEventName, SDKEventType
+from polaris.pkg.model.lossless import InstanceProperties, LosslessActionProvider, LosslessInstance, RegisterStatus
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.error import ErrorCode, SDKError
 from polaris._version import __version__
@@ -33,8 +35,13 @@ from polaris._version import __version__
 __all__ = [
     "Configuration",
     "ConsumerAPI",
+    "ServiceWatch",
     "ErrorCode",
     "LogOptions",
+    "LosslessAPI",
+    "LosslessActionProvider",
+    "LosslessInstance",
+    "InstanceProperties",
     "ProviderAPI",
     "Instance",
     "EventCenter",
@@ -42,6 +49,7 @@ __all__ = [
     "SDKEventName",
     "SDKEventType",
     "SkillAPI",
+    "RegisterStatus",
     "create_skill_by_config",
     "create_skill_by_file",
     "SDKContext",

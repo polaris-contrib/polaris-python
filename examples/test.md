@@ -102,12 +102,24 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 
 `POLARIS_E2E_SERVICE_TOKEN` 与 `POLARIS_SERVICE_TOKEN` 等价。脚本自己设置 `POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES` 写成同一个地址。命名空间默认 `python-integration`，用 `POLARIS_E2E_NAMESPACE` 修改。监控推送把该主机端口改成 `9091`。Skill 另需 `POLARIS_SKILL_SERVER_ADDRESS`（通常是同一主机的 `8094`）和 `POLARIS_SKILL_NAME`。
 
+所有真实 E2E 场景创建的 Context 都会启用事件 Pushgateway，地址由
+`POLARIS_SERVER_ADDRESS` 的 host 加端口 `9091` 得到，上报路径为
+`/polaris/client/events`。各 demo 通过：
+
+- `POLARIS_EVENT_REPORTER_ENABLE=1`
+- `POLARIS_EVENT_REPORTER_ADDRESS=<host>:9091`
+- `POLARIS_EVENT_REPORTER_PUSH_INTERVAL=250`
+- `POLARIS_EVENT_REPORTER_MAX_RETRIES=3`
+- `POLARIS_EVENT_REPORTER_RETRY_INTERVAL=100`
+
+统一应用配置。`POLARIS_EVENT_REPORTER_*` 是示例 E2E 辅助变量，不是 SDK 自动配置变量。
+
 每个场景的运行目录是对应 demo 下的 `.logs/verify-e2e-<时间>-<编号>/`。`console.log` 含验证器 JSON，`result.json` 的 `exit_code` 为 0 才通过，`verification.log` 保存失败断言，`polaris/log/` 是探测 context 的 SDK 日志，demo 标准输出在 `<子目录名>.stdout.log`。
 
 | 场景 | 远端实际检查 |
 | --- | --- |
 | quickstart | 注册 TTL 1 秒的 HTTP Provider，Consumer `GET /echo` 返回 200 且正文含服务名。两个进程保持运行，不在验证器里反注册 |
-| circuitbreaker | 注册固定返回 200 的 Provider，Consumer `/echo` 为 200 且 `circuit_state=closed`，`/instances` 只有这一个实例。不制造失败，不检查半开 |
+| circuitbreaker | 注册 Provider 后真实触发失败、恢复：验证 `closed → open → half_open → closed`，并要求 Open、HalfOpen、Close 三个事件均成功上报到 `<host>:9091/polaris/client/events` |
 | sdkconfig/code、file | 各注册一个 Provider，再用对应配置发现它，断言第一个实例 ID 相同。不重跑离线的 YAML 矩阵 |
 | cache/expiry | 发现后按 5 秒闲置阈值等待并再次发现，前后实例 ID 相同。不关 Discover 流，不删磁盘备份 |
 | cache/restart | 发现一次并确认 `svc#命名空间#服务#*.json` 已写入。不模拟进程被杀或注册中心中断 |
@@ -121,3 +133,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 | events | 注册唯一 Provider，再使用真实注册中心发现并断言 `OnServiceAdded`；Provider 保持运行 |
 
 需要先注册再发现的场景，用 quickstart Provider 注册，然后每 0.5 秒用不带缓存的发现探测，最多 20 秒。服务对象留在 Polaris 上。`./examples/cleanup.sh --force` 停止仍在运行的 demo 进程；`--delete-services` 只删除当前命名空间里 `polaris-python-e2e-` 前缀的服务。各场景的逐步说明在对应目录的 `test.md`。
+
+真实实例的注册 IP 统一通过 `get_local_host(POLARIS_SERVER_ADDRESS)` 获取，即本机
+连接到 Polaris 时 TCP socket 的源地址。验证器会把这个结果与 demo JSON、Provider
+输出和 multicontext 发现结果中的 `host` 逐一比较；离线 loopback stub 仍可使用
+`127.0.0.1`，因为它们不向真实注册中心发布实例。

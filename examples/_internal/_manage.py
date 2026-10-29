@@ -56,11 +56,14 @@ VERIFIERS = {
     "a2a": ("a2a/verify.py", []),
     "monitoring": ("monitoring/verify.py", []),
     "events": ("events/verify.py", []),
+    "lossless": ("lossless/verify.py", []),
 }
 GROUPS = {
     "": ["quickstart", "circuitbreaker", "sdkconfig/code", "sdkconfig/file",
          "cache/expiry", "cache/restart", "loadbalancer/random", "loadbalancer/wr",
-         "servicerouter", "multicontext", "mcp", "skill", "a2a", "monitoring", "events"],
+         "servicerouter", "multicontext", "mcp", "skill", "a2a", "monitoring",
+         "events", "lossless"],
+    "lossless": ["lossless"],
     "sdkconfig": ["sdkconfig/code", "sdkconfig/file"],
     "cache": ["cache/expiry", "cache/restart"],
     "loadbalancer": ["loadbalancer/random", "loadbalancer/wr"],

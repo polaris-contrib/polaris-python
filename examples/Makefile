@@ -1,4 +1,4 @@
-SUBDIRS := cache circuitbreaker events loadbalancer mcp multicontext quickstart sdkconfig servicerouter skill
+SUBDIRS := a2a cache circuitbreaker events loadbalancer lossless mcp monitoring multicontext quickstart sdkconfig servicerouter skill
 VERIFY_COMMAND := "$(CURDIR)/verify.sh"
 
 include group.mk

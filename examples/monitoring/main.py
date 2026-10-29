@@ -28,7 +28,12 @@ from aiohttp import ClientSession, web
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import (
+    configure_e2e_event_reporting,
+    demo_backup_directory,
+    demo_log_options,
+    get_local_host,
+)
 from polaris import Configuration, ConsumerAPI, ProviderAPI, init_context_by_config
 from polaris.pkg.model.error import ErrorCode, SDKError
 from polaris.pkg.model.server import InstanceRegisterRequest, InstanceDeRegisterRequest
@@ -37,6 +42,9 @@ from polaris.pkg.model.service import GetOneInstanceRequest, RetStatus, ServiceC
 
 async def run(args):
     """Own one echo endpoint, registration, HTTP calls and the metrics context."""
+    if not args.host:
+        args.host = get_local_host(args.server.split(",", 1)[0].strip())
+
     async def echo(request):
         return web.Response(text="echo", status=int(request.query.get("status", "200")))
 
@@ -51,6 +59,7 @@ async def run(args):
     try:
         config = Configuration()
         config.set_default()
+        configure_e2e_event_reporting(config)
         config.get_global().get_server_connector().addresses = args.server.split(",")
         config.get_global().get_server_connector().token = os.getenv("POLARIS_TOKEN", "")
         config.get_global().get_admin().host = "127.0.0.1"
@@ -102,7 +111,13 @@ async def run(args):
                         caller_service=ServiceInfo("demo-caller", args.namespace), labels="env=demo"))
             url = f"http://127.0.0.1:{context.engine.stat_reporter.port}/metric" if args.mode == "pull" else None
             await asyncio.sleep(args.duration)
-            result = {"mode": args.mode, "metrics_url": url, "calls": 3}
+            result = {
+                "mode": args.mode,
+                "metrics_url": url,
+                "calls": 3,
+                "host": args.host,
+                "port": port,
+            }
             if args.mode == "push":
                 result["pushes"] = context.engine.stat_reporter.push_count
             print(json.dumps(result), flush=True)
@@ -112,7 +127,7 @@ async def run(args):
                     if 'callee_method="/echo"' not in metrics:
                         raise RuntimeError("No aggregated HTTP call metrics; allow at least 30 seconds")
                     print(metrics, end="", flush=True)
-        result = {"mode": args.mode, "calls": 3}
+        result = {"mode": args.mode, "calls": 3, "host": args.host, "port": port}
         if args.mode == "push":
             result["pushes"] = context.engine.stat_reporter.push_count
         return result
@@ -134,7 +149,7 @@ def main(argv=None):
     parser.add_argument("--token", default=os.getenv("POLARIS_SERVICE_TOKEN", ""))
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--service", default="demo-monitoring")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", help="Advertised and listening IP; defaults to the Polaris route source IP")
     parser.add_argument("--mode", choices=["pull", "push"], default="pull")
     parser.add_argument("--metrics-port", type=int, default=0)
     parser.add_argument("--push-address", action="append", default=[])

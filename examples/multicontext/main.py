@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[2] / "src"), str(Path(__file__).resolve().parents[2])]
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
@@ -29,24 +29,18 @@ import json
 import os
 import signal
 import threading
-import socket
 
+from examples._internal._runtime import get_local_host
 from polaris import Configuration, ConsumerAPI, ProviderAPI, SDKError, init_context_by_config
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import GetInstancesRequest
-from polaris.pkg.model.util import get_ip_from_int_with_port
-
-
-def getLocalHost(serverAddress):
-    host, port = get_ip_from_int_with_port(serverAddress)
-    with socket.create_connection((host, port), timeout=2) as connection:
-        return connection.getsockname()[0]
 
 
 def create_client(name, address, token, work_dir, level):
     """Assign configuration directly and give this client its own cache and log directory."""
     config = Configuration()
     config.set_default()
+    configure_e2e_event_reporting(config)
     config.get_global().get_server_connector().addresses = [address]
     config.get_global().get_server_connector().token = token
     config.get_global().get_api().bind_ip = "127.0.0.1"
@@ -86,7 +80,7 @@ async def run(args):
             client = create_client(name, address, os.getenv(f"POLARIS_{name.upper()}_TOKEN", ""),
                                    args.work_dir, level)
             clients.append(client)
-            host = getLocalHost(client.get_config().get_global().get_server_connector().get_addresses()[0])
+            host = get_local_host(client.get_config().get_global().get_server_connector().get_addresses()[0])
             request = InstanceRegisterRequest(args.service, os.getenv(f"POLARIS_{name.upper()}_SERVICE_TOKEN", ""),
                                                args.namespace, host, 8080 + len(clients), ttl=args.ttl)
             response = await ProviderAPI(client).async_register_instance(request)

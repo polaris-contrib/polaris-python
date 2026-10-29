@@ -37,7 +37,7 @@ def main():
     with verification_directory(__file__), patch.object(GrpcConnection, "_stub", fake_stub), \
             patch.dict("os.environ", {"POLARIS_E2E": "1"}):
         assert demo.main(["--server", "offline:8091", "--namespace", "ns", "--service", "mcp",
-                          "--token", "token"]) == 0
+                          "--host", "127.0.0.1", "--token", "token"]) == 0
         methods = [method for method, _ in stub.calls]
         assert methods.count("register") == methods.count("contract") == methods.count("deregister") == 1
         assert "heartbeat" in methods

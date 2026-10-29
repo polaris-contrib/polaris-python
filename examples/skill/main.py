@@ -24,7 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
 from polaris import Configuration, ConsumerAPI, SkillAPI, init_context_by_config
 from polaris.pkg.model.service import GetInstancesRequest
 from polaris.pkg.model.skill import SkillDownloadRequest, SkillGetRequest, SkillListRequest
@@ -34,6 +34,7 @@ def run(args):
     """Query metadata and fetch the requested published content and ZIP package."""
     config = Configuration()
     config.set_default()
+    configure_e2e_event_reporting(config)
     config.get_global().get_admin().port = 0
     config.get_global().get_api().bind_ip = "127.0.0.1"
     config.get_global().get_server_connector().addresses = args.server.split(",")

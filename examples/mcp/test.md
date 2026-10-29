@@ -63,7 +63,10 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only mcp
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-mcp-<年月日时分秒毫秒>`。本机端口由操作系统分配，host 固定 `127.0.0.1`，协议 `mcp-streamable-http`，协议版本 `2025-06-18`，服务版本 `v1`，TTL 1 秒。超时 30 秒。
+命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-mcp-<年月日时分秒毫秒>`。
+本机端口由操作系统分配，host 使用 `get_local_host(POLARIS_SERVER_ADDRESS)` 得到的
+路由源 IP，协议 `mcp-streamable-http`，协议版本 `2025-06-18`，服务版本 `v1`，
+TTL 1 秒。超时 30 秒。
 
 步骤：
 
@@ -73,6 +76,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 4. `get_service_contract` 读到契约。服务端暂时返回 not found 时，在超时内每 0.2 秒重试。契约没带回 feature 明细时，用本地上报的三个名称填充。
 5. 打印 JSON 后进程保持运行。验证器看到 JSON 且进程仍活着就结束检查，此时 `finally` 里的反注册还没执行。
 
-通过条件：`instance_type` 为 `Instance`，`features` 正好是 lookup、document、summarize。不调用 tools/list，也不连接 MCP 客户端。离线验证里“退出后替身已空、至少一次心跳”不在这一路检查，因为进程被留下。
+通过条件：`instance_type` 为 `Instance`，`features` 正好是 lookup、document、
+summarize，`host` 等于验证器计算出的本机路由源 IP。不调用 tools/list，也不连接
+MCP 客户端。离线验证里“退出后替身已空、至少一次心跳”不在这一路检查，因为进程被留下。
 
 运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`mcp.stdout.log` 是示例 JSON，`result.json` 的 `exit_code` 为 0 才通过。停掉进程才会走到反注册；`./examples/cleanup.sh --force` 发 SIGTERM。服务对象用 `--delete-services` 删除。发现超时或契约读失败会非零退出。

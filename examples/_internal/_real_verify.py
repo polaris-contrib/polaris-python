@@ -27,8 +27,10 @@ import subprocess
 import sys
 import time
 import psutil
+import yaml
 from datetime import datetime
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import quote_plus
 from urllib.request import ProxyHandler, build_opener
 
@@ -36,7 +38,12 @@ REPO = Path(__file__).resolve().parents[2]
 EXAMPLES = REPO / "examples"
 
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
-from examples._internal._runtime import record_external_process, verification_directory
+from examples._internal._runtime import (
+    configure_e2e_event_reporting,
+    get_local_host,
+    record_external_process,
+    verification_directory,
+)
 from polaris import Configuration, ConsumerAPI, SDKEventName, init_context_by_config
 from polaris.api.log import LogOptions
 from polaris.pkg.model.error import SDKError
@@ -58,11 +65,17 @@ def required_environment():
 
 def scenario_environment(address):
     env = os.environ.copy()
+    registry_host = address.rsplit(":", 1)[0].strip("[]")
     env.update(
         POLARIS_E2E="1",
         POLARIS_SERVER_ADDRESS=address,
         POLARIS_SERVER=address,
         POLARIS_SERVER_ADDRESSES=address,
+        POLARIS_EVENT_REPORTER_ENABLE="1",
+        POLARIS_EVENT_REPORTER_ADDRESS=f"{registry_host}:9091",
+        POLARIS_EVENT_REPORTER_PUSH_INTERVAL="250",
+        POLARIS_EVENT_REPORTER_MAX_RETRIES="3",
+        POLARIS_EVENT_REPORTER_RETRY_INTERVAL="100",
         PYTHONUNBUFFERED="1",
         PYTHONDONTWRITEBYTECODE="1",
     )
@@ -83,6 +96,13 @@ def service_name(scenario):
     now = datetime.now()
     stamp = now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond // 1000:03d}"
     return f"polaris-python-e2e-{label}-{stamp}"
+
+
+def assert_instance_host(actual, address):
+    """Require the advertised instance IP to match the Polaris route source IP."""
+    expected = get_local_host(address)
+    if actual != expected:
+        raise AssertionError(f"instance host {actual!r} does not match local route IP {expected!r}")
 
 
 def cache_backup_glob(namespace, service):
@@ -198,6 +218,7 @@ def with_provider(scenario, namespace, env, address, service_token, effect):
     provider, provider_info = start_quickstart_provider(
         address, service_token, namespace, service, env, Path(env["POLARIS_DEMO_RUN_DIR"]),
     )
+    assert_instance_host(provider_info["host"], address)
     wait_for_provider(address, namespace, service, provider_info["instance_id"], env)
     result = effect(service, provider_info)
     if provider.poll() is not None:
@@ -206,9 +227,33 @@ def with_provider(scenario, namespace, env, address, service_token, effect):
 
 
 def request_json(url):
-    with build_opener(ProxyHandler({})).open(url, timeout=10) as response:
-        body = response.read()
-        return response.status, json.loads(body)
+    try:
+        with build_opener(ProxyHandler({})).open(url, timeout=10) as response:
+            body = response.read()
+            return response.status, json.loads(body)
+    except HTTPError as error:
+        with error:
+            return error.code, json.loads(error.read())
+
+
+def request_text(url):
+    try:
+        with build_opener(ProxyHandler({})).open(url, timeout=10) as response:
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except HTTPError as error:
+        with error:
+            return error.code, error.read().decode("utf-8", errors="replace")
+
+
+def wait_for_text(url, expected, timeout=10):
+    deadline = time.monotonic() + timeout
+    last_value = ""
+    while time.monotonic() < deadline:
+        status, last_value = request_text(url)
+        if status == 200 and last_value == expected:
+            return status, last_value
+        time.sleep(0.2)
+    raise RuntimeError(f"HTTP endpoint {url} did not return {expected!r}: {last_value!r}")
 
 
 def wait_for_provider(address, namespace, service, expected_id, env, timeout=20):
@@ -227,6 +272,7 @@ def wait_for_provider(address, namespace, service, expected_id, env, timeout=20)
         config.get_global().get_api().bind_ip = "127.0.0.1"
         config.get_global().get_api().timeout = 3000
         config.get_consumer().get_local_cache().persist_dir = str(run / "polaris" / "backup" / "probe")
+        configure_e2e_event_reporting(config)
         context = init_context_by_config(
             config,
             log_options=LogOptions(log_dir=run / "polaris" / "log" / "probe"),
@@ -270,11 +316,33 @@ def wait_for_http(url, predicate, timeout=10):
     raise RuntimeError(f"HTTP endpoint {url} did not become ready: {last_error}")
 
 
+def wait_for_pushed_events(run, event_names, timeout=10):
+    """Wait until SDK logs confirm each circuit event received a 2xx response."""
+    deadline = time.monotonic() + timeout
+    missing = list(event_names)
+    logs = []
+    while time.monotonic() < deadline:
+        logs = [
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in run.glob("polaris/log/**/event/*.log")
+        ]
+        output = "\n".join(logs)
+        missing = [
+            name for name in event_names
+            if f"reported event to Pushgateway: CIRCUIT_BREAKING|{name}|" not in output
+        ]
+        if not missing:
+            return
+        time.sleep(0.2)
+    raise RuntimeError(f"Circuit events were not accepted by Pushgateway: {missing}")
+
+
 def verify_quickstart(env, address, service_token, namespace):
     service = service_name("quickstart")
     provider, provider_info = start_quickstart_provider(
         address, service_token, namespace, service, env, Path(env["POLARIS_DEMO_RUN_DIR"]),
     )
+    assert_instance_host(provider_info["host"], address)
     consumer = None
     consumer_port = None
     wait_for_provider(address, namespace, service, provider_info["instance_id"], env)
@@ -321,17 +389,29 @@ def verify_circuitbreaker(env, address, service_token, namespace):
         "--status", "200",
         "--ttl", "3",
     ], env, "registered")
+    assert_instance_host(provider_payload["host"], address)
     consumer = None
     consumer_port = None
     wait_for_provider(
         address, namespace, service, provider_payload["registered"], env,
     )
+    config = yaml.safe_load(
+        (EXAMPLES / "circuitbreaker/consumer/polaris.yaml").read_text(encoding="utf-8")
+    )
+    circuit = config["consumer"]["circuitBreaker"]
+    circuit["checkPeriod"] = "1s"
+    circuit["sleepWindow"] = "2s"
+    circuit["successCountAfterHalfOpen"] = 2
+    circuit["defaultErrorCount"] = 3
+    consumer_config = Path(env["POLARIS_DEMO_RUN_DIR"]) / "work/circuitbreaker-consumer.yaml"
+    consumer_config.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     consumer_port = free_port()
     consumer, _ = start_demo(EXAMPLES / "circuitbreaker/consumer/main.py", [
         "--namespace", namespace,
         "--service", service,
         "--port", str(consumer_port),
         "--call-timeout", "5",
+        "--config", str(consumer_config),
     ], env, "started")
     status, result = wait_for_http(
         f"http://127.0.0.1:{consumer_port}/echo",
@@ -340,6 +420,49 @@ def verify_circuitbreaker(env, address, service_token, namespace):
     instances_status, instances = request_json(f"http://127.0.0.1:{consumer_port}/instances")
     assert instances_status == 200 and len(instances) == 1
     assert instances[0]["instance_id"] == provider_payload["registered"]
+
+    provider_url = f"http://127.0.0.1:{provider_payload['port']}"
+    consumer_url = f"http://127.0.0.1:{consumer_port}"
+    wait_for_http(
+        f"{provider_url}/switch?openError=true",
+        lambda code, body: code == 200 and body["status"] == 500,
+    )
+    for _ in range(3):
+        wait_for_http(
+            f"{consumer_url}/echo",
+            lambda code, body: code == 500 and body["ret_code"] == 500,
+        )
+    wait_for_http(
+        f"{consumer_url}/instances",
+        lambda code, body: code == 200 and body[0]["circuit_state"] == "open",
+        timeout=10,
+    )
+    wait_for_http(
+        f"{consumer_url}/instances",
+        lambda code, body: code == 200 and body[0]["circuit_state"] == "half_open",
+        timeout=10,
+    )
+    wait_for_http(
+        f"{provider_url}/switch?openError=false",
+        lambda code, body: code == 200 and body["status"] == 200,
+    )
+    for _ in range(2):
+        wait_for_http(
+            f"{consumer_url}/echo",
+            lambda code, body: code == 200 and body["ret_code"] == 200,
+            timeout=10,
+        )
+    _, final_instances = wait_for_http(
+        f"{consumer_url}/instances",
+        lambda code, body: code == 200 and body[0]["circuit_state"] == "closed",
+        timeout=10,
+    )
+    event_names = [
+        SDKEventName.CIRCUIT_BREAKER_OPEN,
+        SDKEventName.CIRCUIT_BREAKER_HALF_OPEN,
+        SDKEventName.CIRCUIT_BREAKER_CLOSE,
+    ]
+    wait_for_pushed_events(Path(env["POLARIS_DEMO_RUN_DIR"]), event_names)
     if provider.poll() is not None or consumer.poll() is not None:
         raise RuntimeError("circuitbreaker provider or consumer exited during verification")
     return {
@@ -349,7 +472,10 @@ def verify_circuitbreaker(env, address, service_token, namespace):
         "consumer_port": consumer_port,
         "http_status": 200,
         "circuit_state": "closed",
-        "effect": "registered, discovered, called, and kept running",
+        "circuit_states": ["closed", "open", "half_open", "closed"],
+        "reported_events": event_names,
+        "final_instances": final_instances,
+        "effect": "verified Open, HalfOpen and Close transitions and reported events to Pushgateway",
     }
 
 
@@ -432,6 +558,9 @@ def verify_multicontext(env, address, service_token, namespace):
     assert len(set(result["client_ids"])) == 2
     assert result["first_destroyed"]
     assert result["second_available_after_first_destroy"]
+    for instances in result["initial_instances"]:
+        for instance in instances:
+            assert_instance_host(instance["host"], address)
     if process.poll() is not None:
         raise RuntimeError("multicontext example exited during verification")
     return {
@@ -462,6 +591,50 @@ def verify_events(env, address, service_token, namespace):
     return with_provider("events", namespace, env, address, service_token, effect)
 
 
+def verify_lossless(env, address, service_token, namespace):
+    service = service_name("lossless")
+    provider, provider_payload = start_demo(EXAMPLES / "lossless/provider/main.py", [
+        "--namespace", namespace,
+        "--service", service,
+        "--service-token", service_token,
+        "--port", "0",
+        "--admin-port", "0",
+        "--ttl", "3",
+    ], env, "started", timeout=30)
+    assert_instance_host(provider_payload["host"], address)
+    status, readiness = wait_for_text(provider_payload["readiness_url"], "REGISTERED", timeout=15)
+
+    consumer, _ = start_demo(EXAMPLES / "lossless/consumer/main.py", [
+        "--namespace", namespace,
+        "--service", service,
+        "--interval", "0.1",
+    ], env, "started", timeout=20)
+    time.sleep(1)
+    consumer_output = stop_demo(
+        consumer, Path(env["POLARIS_DEMO_RUN_DIR"]) / "lossless-consumer.stdout.log", "lossless consumer",
+    )
+    consumer_result = last_json(consumer_output)
+    if not consumer_result.get("calls"):
+        raise AssertionError(f"lossless consumer did not invoke the provider: {consumer_result}")
+
+    provider_output = stop_demo(
+        provider, Path(env["POLARIS_DEMO_RUN_DIR"]) / "lossless-provider.stdout.log", "lossless provider",
+    )
+    deregistered = [json.loads(line) for line in provider_output.splitlines()
+                    if line.startswith("{") and "deregistered" in line]
+    if not deregistered:
+        raise AssertionError(f"lossless provider did not report deregistration: {provider_output}")
+    return {
+        "service": service,
+        "provider": {"host": provider_payload["host"], "port": provider_payload["port"]},
+        "readiness": readiness,
+        "http_status": status,
+        "consumer_calls": consumer_result["calls"],
+        "deregistered": deregistered[0]["deregistered"],
+        "effect": "waited for readiness, invoked the provider, and deregistered losslessly",
+    }
+
+
 def run_scenario(name, address, service_token, namespace, env):
     aliases = {
         "quickstart/provider": "quickstart",
@@ -478,6 +651,8 @@ def run_scenario(name, address, service_token, namespace, env):
         return verify_multicontext(env, address, service_token, namespace)
     if name == "events":
         return verify_events(env, address, service_token, namespace)
+    if name == "lossless":
+        return verify_lossless(env, address, service_token, namespace)
     if name == "mcp":
         service = service_name("mcp")
         port = free_port()
@@ -490,6 +665,7 @@ def run_scenario(name, address, service_token, namespace, env):
             raise AssertionError("MCP example did not return an ordinary Instance")
         if set(result["features"]) != {"lookup", "document", "summarize"}:
             raise AssertionError("MCP startup contract does not contain all capabilities")
+        assert_instance_host(result["host"], address)
         if process.poll() is not None:
             raise RuntimeError("MCP example exited during verification")
         return {"service": service, **result, "kept_running": True}
@@ -515,6 +691,7 @@ def run_scenario(name, address, service_token, namespace, env):
             raise AssertionError("Real push-mode invocation metrics are missing")
         if result.get("pushes", 0) < 1:
             raise AssertionError("Real Pushgateway export did not complete successfully")
+        assert_instance_host(result["host"], address)
         return {
             "service": service,
             "push_address": push_address,
@@ -530,6 +707,8 @@ def run_scenario(name, address, service_token, namespace, env):
         result = last_json(output)
         if name == "a2a" and result.get("transport") != "JSONRPC":
             raise AssertionError("A2A metadata discovery failed")
+        if name == "a2a":
+            assert_instance_host(result["host"], address)
         return {"service": service, **result, "effect": "verified and explicitly deregistered"}
     return verify_discovery_demo(name, env, address, service_token, namespace)
 

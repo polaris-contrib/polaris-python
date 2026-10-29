@@ -1,0 +1,14 @@
+global:
+  admin:
+    port: -1
+  serverConnector:
+    addresses: ["${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}"]
+    token: "${POLARIS_TOKEN:}"
+  api:
+    timeout: 2s
+consumer:
+  localCache:
+    persistDir: ./.logs/manual/backup/consumer
+  weightAdjust:
+    enable: true
+    chain: [warmup]

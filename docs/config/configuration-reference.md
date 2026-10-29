@@ -116,6 +116,16 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 | 字段 | 类型 / 格式 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `minRegisterInterval` | duration，>0 | `30s` | 连续 `400202` 后自动重注册的最小间隔。 |
+| `lossless.enable` | bool | `false` | 是否开启无损上下线。 |
+| `lossless.strategy` | `DELAY_BY_TIME` / `DELAY_BY_HEALTH_CHECK` | `DELAY_BY_TIME` | 无损上线策略：延迟注册或健康探测通过后注册。 |
+| `lossless.delayRegisterInterval` | duration，>0 | `30s` | `DELAY_BY_TIME` 的兜底延迟。 |
+| `lossless.healthCheckInterval` | duration，>0 | `5s` | 健康探测轮询间隔。 |
+| `lossless.healthCheckProtocol` | string | `http` | 当前仅支持 `http`。 |
+| `lossless.healthCheckPath` | path | `""` | 探测 `127.0.0.1:实例端口` 下的路径。 |
+| `lossless.healthCheckMethod` | string | `GET` | 预留，当前使用 GET。 |
+
+服务端下发的无损规则优先于本地配置；元数据规则按实例 metadata 匹配。详见
+[无损上下线](../lossless.md)。
 
 ## consumer.localCache
 
@@ -194,6 +204,14 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 
 返回码 `500-599` 或 `-1` 计为失败。详见 [本地实例熔断](../circuitbreaker.md)。
 
+## consumer.weightAdjust
+
+| 字段 | 类型 / 格式 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enable` | bool | `true` | 动态权重调整总开关。 |
+| `chain` | `list[string]` | `[]` | 当前支持 `warmup`，按服务端无损规则对新实例做权重预热。 |
+
+## ai.skill.serverConnector
 ## ai.skill.serverConnector
 
 | 字段 | 类型 / 格式 | 默认值 | 说明 |

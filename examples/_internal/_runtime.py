@@ -18,6 +18,7 @@
 import atexit
 import json
 import os
+import socket
 import sys
 import traceback
 import uuid
@@ -28,6 +29,18 @@ from pathlib import Path
 import psutil
 
 _tracked = set()
+
+
+def get_local_host(server_address):
+    """Return the local TCP source IP used to reach a Polaris server."""
+    from polaris.pkg.model.util import get_ip_from_int_with_port
+
+    host, port = get_ip_from_int_with_port(server_address)
+    with socket.create_connection((host, port), timeout=2) as connection:
+        return connection.getsockname()[0]
+
+
+getLocalHost = get_local_host
 
 
 def new_run_directory(directory, action):
@@ -98,6 +111,23 @@ def demo_backup_directory(entry, *, component=None):
         path /= component
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def configure_e2e_event_reporting(config):
+    """Apply the real E2E event-reporter endpoint to a demo configuration."""
+    addresses = os.getenv("POLARIS_EVENT_REPORTER_ADDRESS", "")
+    if not addresses or os.getenv("POLARIS_EVENT_REPORTER_ENABLE", "1").lower() not in ("1", "true", "yes", "on"):
+        return config
+    config.set_default()
+    reporter = config.get_global().get_event_reporter()
+    reporter.enable = True
+    reporter.chain = ["pushgateway"]
+    pushgateway = reporter.get_pushgateway()
+    pushgateway.address = [item.strip() for item in addresses.split(",") if item.strip()]
+    pushgateway.push_interval = int(os.getenv("POLARIS_EVENT_REPORTER_PUSH_INTERVAL", "250"))
+    pushgateway.max_retries = int(os.getenv("POLARIS_EVENT_REPORTER_MAX_RETRIES", "3"))
+    pushgateway.retry_interval = int(os.getenv("POLARIS_EVENT_REPORTER_RETRY_INTERVAL", "100"))
+    return config
 
 
 class _Tee:

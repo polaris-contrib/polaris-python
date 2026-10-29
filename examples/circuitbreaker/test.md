@@ -109,13 +109,16 @@ sleep window、默认规则关闭和异步调用。每个 context 使用独立�
 两个实际 Provider 端口会出现在 `console.log` 的注册 JSON 和 HTTP 场景输出中；fake
 registry 地址是 `offline.invalid:8091`，stub 会断言该地址并替代远端连接。
 
-手动运行时，Provider 默认注册 `default/CircuitBreakerCallee`，host
-`127.0.0.1`、port `18081`、TTL 5 秒。Provider 和 Consumer 的默认监听端口都是
-`18081`，同时运行时需给其中至少一个显式传入不同 `--port`。
+手动运行时，Provider 默认注册 `default/CircuitBreakerCallee`，host 使用
+`get_local_host(POLARIS_SERVER_ADDRESS)`、port `18081`、TTL 5 秒。
+Provider 和 Consumer 的默认监听端口都是 `18081`，同时运行时需给其中至少一个
+显式传入不同 `--port`。
 
 ## 远端验证
 
-这一路不替换 gRPC，也不跑离线的十个熔断场景。`--only circuitbreaker`、`circuitbreaker/provider` 和 `circuitbreaker/consumer` 是同一套检查，日志落在各自目录。
+这一路不替换 gRPC，也不跑离线的十个熔断场景，但会真实触发核心状态机和事件上报。
+`--only circuitbreaker`、`circuitbreaker/provider` 和 `circuitbreaker/consumer`
+是同一套检查，日志落在各自目录。
 
 ```bash
 export POLARIS_SERVER_ADDRESS=<host>:8091
@@ -128,10 +131,22 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 
 步骤：
 
-1. 启动 Provider。`--host 127.0.0.1`，`--port 0`，`--status 200`，`--ttl 3`。它只返回 HTTP 200，进程保持运行并心跳。
+1. 启动 Provider。`--port 0`，`--status 200`，`--ttl 3`。注册 host 通过
+   `get_local_host(POLARIS_SERVER_ADDRESS)` 得到，必须是本机到 Polaris 的路由源 IP。
+   初始返回 HTTP 200，进程保持运行并心跳。
 2. 每 0.5 秒用不带缓存的发现确认 instance id，最多 20 秒。
-3. Consumer 监听动态端口。验证器请求 `GET /echo`，要求状态 200、JSON 里 `ret_code` 为 200、`circuit_state` 为 `closed`。
-4. 再请求 `GET /instances`，要求状态 200、只有 1 个实例，且 `instance_id` 等于注册结果。
-5. 两个进程都必须仍在运行。验证器不反注册，也不上报 500 去打开熔断。
+3. Consumer 使用本次运行目录中的临时 YAML，把检查周期设为 `1s`、sleep window
+   设为 `2s`、连续失败阈值设为 3、半开成功阈值设为 2。
+4. 先确认实例为 `closed`，再通过 Provider 的 `/switch?openError=true` 返回 HTTP 500，
+   连续触发 3 次失败。
+5. 等待本地熔断进入 `open`；sleep window 到期后等待进入 `half_open`。
+6. 把 Provider 切回 HTTP 200，连续成功 2 次，确认恢复为 `closed`。
+7. 每个 Context 都启用事件 Pushgateway。验证器检查 event 日志中出现
+   `reported event to Pushgateway`，且事件分别为 `CircuitBreakerOpen`、
+   `CircuitBreakerHalfOpen`、`CircuitBreakerClose`。Pushgateway 地址取自 Polaris host
+   的 `9091` 端口。
 
-通过条件是 `circuit_state` 为 `closed`。JSON 含 service、provider instance id、host、port、`consumer_port`。连续失败、错误率、半开、全死全活和真实 sleep window 只在离线验证里。`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。
+通过条件是状态序列为 `closed → open → half_open → closed`，三个熔断事件都收到
+Pushgateway 2xx 响应。JSON 含 service、provider instance id、host、port、
+`consumer_port`、`circuit_states` 和 `reported_events`。
+`./examples/cleanup.sh --force` 停进程，`--delete-services` 删服务。

@@ -19,9 +19,10 @@ POLARIS_SERVER_ADDRESS=<host>:8091 POLARIS_SERVICE_TOKEN=<service-token> \
 
 ```bash
 POLARIS_E2E=1 POLARIS_SERVICE_TOKEN=<service-token> \
-make -C examples/mcp run ARGS="--server <host>:8091 --service search-mcp --host 127.0.0.1 --port 8000"
+make -C examples/mcp run ARGS="--server <host>:8091 --service search-mcp --port 8000"
 ```
 
+注册 IP 默认通过 `get_local_host(--server 地址)` 获取；只有应用有独立可达地址时才显式传 `--host`。
 `--protocol` 支持 `mcp-streamable-http`、`mcp-sse`；`--path` 默认分别为 `/mcp`、`/sse`。
 `--version` 为 Server 版本，`--protocol-version` 为协议版本，`--ttl` 为心跳秒数。
 兼容检查、能力组装、URL 拼装和退出反注册都在示例层；SDK 发现仍使用普通路由。
