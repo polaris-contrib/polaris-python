@@ -116,27 +116,47 @@ def run_process(directory, entry, arguments, action, timeout):
     if action == "run":
         # The wrapper tees output and tracks identity in the same PID as main.py.
         command = [sys.executable, str(EXAMPLES / "_internal" / "_run.py"), str(entry), *arguments]
+    process_options = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
     process = subprocess.Popen(command, cwd=directory if action == "run" else work,
-                               env=env, start_new_session=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, **process_options)
     timed_out = False
     interrupted = None
     finished = threading.Event()
     escalation = None
 
-    def signal_group(signum):
+    def stop_tree(force=False):
+        if os.name == "nt":
+            try:
+                root = psutil.Process(process.pid)
+                try:
+                    targets = root.children(recursive=True) + [root]
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    targets = [root]
+                for target in targets:
+                    try:
+                        target.kill() if force else target.terminate()
+                    except (psutil.AccessDenied, psutil.NoSuchProcess):
+                        pass
+            except psutil.NoSuchProcess:
+                pass
+            return
         try:
-            os.killpg(process.pid, signum)
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
         except ProcessLookupError:
             pass
 
     def force_stop():
         if not finished.is_set():
-            signal_group(signal.SIGKILL)
+            stop_tree(force=True)
 
     def terminate_group():
         nonlocal escalation
-        signal_group(signal.SIGTERM)
+        stop_tree()
         if escalation is None:
             escalation = threading.Timer(TERMINATE_GRACE_SECONDS, force_stop)
             escalation.daemon = True
@@ -172,11 +192,11 @@ def run_process(directory, entry, arguments, action, timeout):
         if escalation:
             escalation.cancel()
         if process.poll() is None:
-            signal_group(signal.SIGTERM)
+            stop_tree()
             try:
                 process.wait(timeout=TERMINATE_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                signal_group(signal.SIGKILL)
+                stop_tree(force=True)
                 process.wait()
         process.stdout.close()
         for value, handler in old_handlers.items():

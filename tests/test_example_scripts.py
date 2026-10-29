@@ -18,6 +18,7 @@
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -232,7 +233,10 @@ def test_example_registry_matches_makefile_and_scenario_files():
 def test_root_example_scripts_print_usage(script):
     path = REPO / "examples" / script
     assert os.access(path, os.X_OK)
-    result = subprocess.run([str(path), "--help"], cwd=REPO,
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("Bash is unavailable")
+    result = subprocess.run([bash, path.as_posix(), "--help"], cwd=REPO,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
@@ -458,6 +462,7 @@ def test_verification_timeout_reaps_a_quiet_process_and_retains_failure(example_
     assert result.with_name("console.log").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not deliver SIGTERM to Python handlers")
 def test_interrupted_verification_retains_result_even_when_child_exits_cleanly(example_tree):
     selected = example_tree / "sdkconfig/code"
     entry = selected / "verify.py"
