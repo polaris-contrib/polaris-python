@@ -54,6 +54,11 @@ def test_real_verification_registers_into_python_integration(monkeypatch):
     assert e2e_namespace() == "python-integration"
     monkeypatch.setenv("POLARIS_E2E_NAMESPACE", "custom")
     assert e2e_namespace() == "custom"
+    monkeypatch.setenv("POLARIS_E2E_NAMESPACE", "default")
+    with pytest.raises(ValueError, match="must not be default"):
+        e2e_namespace()
+    with pytest.raises(ValueError, match="must not be default"):
+        manager.e2e_namespace()
 
 
 def test_real_verification_event_reporter_uses_pushgateway(monkeypatch):

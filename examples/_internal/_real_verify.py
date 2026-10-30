@@ -42,6 +42,7 @@ from examples._internal._runtime import (
     configure_e2e_event_reporting,
     get_local_host,
     record_external_process,
+    resolve_e2e_namespace,
     verification_directory,
 )
 from polaris import Configuration, ConsumerAPI, SDKEventName, init_context_by_config
@@ -87,7 +88,7 @@ def scenario_environment(address):
 
 def e2e_namespace():
     """Return the namespace for services created by real-service verification."""
-    return os.getenv("POLARIS_E2E_NAMESPACE", "python-integration")
+    return resolve_e2e_namespace()
 
 
 def service_name(scenario):

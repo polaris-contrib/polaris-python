@@ -62,6 +62,11 @@ export POLARIS_SKILL_NAMESPACE=default
 
 `POLARIS_SKILL_SERVER_ADDRESS` 和 `POLARIS_SKILL_NAME` 缺一不可，否则验证器在启动示例前就失败。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，Skill 连接使用 `POLARIS_TOKEN`。`POLARIS_SERVICE_TOKEN` 仍是脚本的前置参数，但这个场景不会拿它去注册实例。
 
+实例 E2E 命名空间固定为 `python-integration`，不得把
+`POLARIS_E2E_NAMESPACE` 设为 `default`。Skill 资源使用独立的
+`POLARIS_SKILL_NAMESPACE`，默认 `default`，不要为了让测试读到 Skill 而把测试服务
+放进共享命名空间。
+
 步骤：
 
 1. 用 `POLARIS_SERVER_ADDRESS` 建发现连接，用 `POLARIS_SKILL_SERVER_ADDRESS` 建 Skill 连接。

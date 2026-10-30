@@ -100,7 +100,13 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./examples/verify_e2e.sh --only quickstart,monitoring
 ```
 
-`POLARIS_E2E_SERVICE_TOKEN` 与 `POLARIS_SERVICE_TOKEN` 等价。脚本自己设置 `POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES` 写成同一个地址。命名空间默认 `python-integration`，用 `POLARIS_E2E_NAMESPACE` 修改。监控推送把该主机端口改成 `9091`。Skill 另需 `POLARIS_SKILL_SERVER_ADDRESS`（通常是同一主机的 `8094`）和 `POLARIS_SKILL_NAME`。
+`POLARIS_E2E_SERVICE_TOKEN` 与 `POLARIS_SERVICE_TOKEN` 等价。脚本自己设置
+`POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES` 写成同一个地址。
+测试实例和测试服务固定进入 `python-integration`；`POLARIS_E2E_NAMESPACE` 只能覆盖为
+其他隔离命名空间，不能设为共享的 `default`。监控推送把该主机端口改成 `9091`。
+Skill 资源命名空间与实例命名空间相互独立，另需
+`POLARIS_SKILL_SERVER_ADDRESS`（通常是同一主机的 `8094`）、`POLARIS_SKILL_NAME`
+以及可选的 `POLARIS_SKILL_NAMESPACE`（默认 `default`）。
 
 所有真实 E2E 场景创建的 Context 都会启用事件 Pushgateway，地址由
 `POLARIS_SERVER_ADDRESS` 的 host 加端口 `9091` 得到，上报路径为

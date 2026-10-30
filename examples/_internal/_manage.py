@@ -30,7 +30,7 @@ from pathlib import Path
 import psutil
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[2] / "src"), str(Path(__file__).resolve().parents[2])]
-from examples._internal._runtime import new_run_directory, track_process
+from examples._internal._runtime import new_run_directory, resolve_e2e_namespace, track_process
 
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLES = REPO / "examples"
@@ -232,7 +232,7 @@ def console_address():
 
 
 def e2e_namespace():
-    return os.getenv("POLARIS_E2E_NAMESPACE", "python-integration")
+    return resolve_e2e_namespace()
 
 
 def test_services():

@@ -29,6 +29,20 @@ from pathlib import Path
 import psutil
 
 _tracked = set()
+DEFAULT_E2E_NAMESPACE = "python-integration"
+
+
+def resolve_e2e_namespace():
+    """Return the isolated namespace used for real example E2E resources."""
+    namespace = os.getenv("POLARIS_E2E_NAMESPACE", DEFAULT_E2E_NAMESPACE).strip()
+    if not namespace:
+        raise ValueError("POLARIS_E2E_NAMESPACE must not be empty")
+    if namespace == "default":
+        raise ValueError(
+            "POLARIS_E2E_NAMESPACE must not be default; use python-integration "
+            "or another isolated E2E namespace"
+        )
+    return namespace
 
 
 def get_local_host(server_address):
