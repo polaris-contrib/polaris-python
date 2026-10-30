@@ -162,6 +162,13 @@ def stop_demo(process, log_path, description):
     except subprocess.TimeoutExpired:
         process.kill()
         output, _ = process.communicate(timeout=5)
+    if output is None:
+        demo_output = getattr(process, "demo_output_path", None)
+        output = (
+            Path(demo_output).read_text(encoding="utf-8", errors="replace")
+            if demo_output
+            else ""
+        )
     output = "".join(getattr(process, "demo_lines", [])) + output
     Path(log_path).write_text(output, encoding="utf-8")
     if process.returncode != 0:
