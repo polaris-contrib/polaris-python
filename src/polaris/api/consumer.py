@@ -40,10 +40,6 @@ class ServiceWatch:
 
     def close(self):
         """Stop this watch. Repeated close is harmless."""
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
         self._consumer.unwatch_service(self)
 
     def __enter__(self):
@@ -186,6 +182,8 @@ class ConsumerAPI:
         if not isinstance(watch, ServiceWatch) or watch._consumer is not self:
             raise ValueError("watch must belong to this ConsumerAPI")
         with watch._lock:
+            if watch._closed:
+                return
             watch._closed = True
             if getattr(watch, "_event_center", None) is not None:
                 watch._event_center.unregister_listener(

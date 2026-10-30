@@ -145,6 +145,7 @@ class Engine(BaseEngine):
             self._do_register, self._async_heartbeat, min_register_interval,
         )
         self.lossless_manager = LosslessManager(config, None) if config is not None else None
+        self._lossless_owned_providers = {}
         self.admin_server = AdminHttpServer(
             config.get_global().get_admin()) if config is not None else None
         # 全局配置
@@ -742,13 +743,16 @@ class Engine(BaseEngine):
             await self._async_deregister(deregister)
 
         manager = self.lossless_manager
-        if manager.get_action_provider(instance) is None:
-            provider = HttpLosslessActionProvider(
-                instance, register_action, deregister_action,
-                strategy_resolver=lambda: manager.cached_options(instance).strategy,
-                health_check_path_resolver=lambda: manager.cached_options(instance).health_check_path,
-            )
-            manager.set_action_provider(instance, provider)
+        existing = manager.get_action_provider(instance)
+        if existing is not None and self._lossless_owned_providers.get(instance) is not existing:
+            return
+        provider = HttpLosslessActionProvider(
+            instance, register_action, deregister_action,
+            strategy_resolver=lambda: manager.cached_options(instance).strategy,
+            health_check_path_resolver=lambda: manager.cached_options(instance).health_check_path,
+        )
+        manager.set_action_provider(instance, provider)
+        self._lossless_owned_providers[instance] = provider
 
     def sync_heartbeat(self, req: InstanceHeartbeatRequest) -> None:
         """Send an instance heartbeat on the SDK event loop."""

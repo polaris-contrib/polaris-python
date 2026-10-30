@@ -253,6 +253,35 @@ async def test_public_service_list_watch_filters_events_and_pins_cache(runtime):
     assert engine.registry.service_map.get(cache_key) is None
 
 
+@pytest.mark.asyncio
+async def test_repeated_unwatch_does_not_release_other_active_watch(runtime):
+    stub, context, _ = runtime
+    stub.instances = [instance()]
+    consumer = ConsumerAPI(context)
+    request = GetInstancesRequest(namespace="ns", service="mcp")
+    first = await consumer.async_watch_service(request)
+    second = await consumer.async_watch_service(request)
+    cache_key = ServiceEventKey("ns", "mcp", EventType.Instance)
+    engine = context.get_engine()
+
+    consumer.unwatch_service(first)
+    consumer.unwatch_service(first)
+    assert engine.registry._watch_counts[cache_key] == 1
+
+    async def expire():
+        cache_obj = engine.registry.service_map[cache_key]
+        cache_obj.last_visit_time -= 2 * 24 * 60 * 60
+        return await engine.registry.expire_services()
+
+    assert await engine._run_async(expire()) == []
+    assert engine.registry.service_map.get(cache_key) is not None
+
+    second.close()
+    second.close()
+    assert cache_key not in engine.registry._watch_counts
+    assert await engine._run_async(expire()) == [cache_key]
+
+
 def test_route_rule_sync_and_async_names_are_explicit(runtime):
     _, context, _ = runtime
     consumer = ConsumerAPI(context)

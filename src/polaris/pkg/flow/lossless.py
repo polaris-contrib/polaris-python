@@ -110,7 +110,7 @@ def _options_from_rule(rule, config: LosslessConfig) -> LosslessOptions:
     readiness = _submessage(online, "readiness")
     offline = _submessage(rule, "losslessOffline")
     strategy = config.strategy
-    if delay is not None and delay.strategy:
+    if delay is not None:
         try:
             strategy = lossless_pb2.DelayRegister.DelayStrategy.Name(delay.strategy)
         except ValueError:
@@ -195,9 +195,11 @@ class LosslessManager:
         self._register_statuses: Dict[LosslessInstance, RegisterStatus] = {}
         self._register_timestamps: Dict[LosslessInstance, float] = {}
         self._register_tasks: Dict[LosslessInstance, asyncio.Task] = {}
+        self._register_generations: Dict[LosslessInstance, int] = {}
         self._rules_cache: Dict[tuple, tuple] = {}
         self._rules_fetching: set = set()
         self._rule_refresh_tasks: Dict[tuple, set] = {}
+        self._rule_query_timeout = config.get_global().get_api().get_timeout() / 1000
         self._closed = False
 
     def set_action_provider(self, instance: LosslessInstance, provider: LosslessActionProvider) -> None:
@@ -207,13 +209,24 @@ class LosslessManager:
         return self._action_providers.get(instance)
 
     async def fetch_rules(self, namespace: str, service: str) -> List:
-        """Fetch lossless rules from the server and refresh the local cache."""
+        """Return cached rules immediately, or load them within the API timeout."""
+        key = (namespace, service)
+        cached = self._rules_cache.get(key)
+        if cached is not None:
+            if time.monotonic() - cached[2] >= RULE_REFRESH_INTERVAL_SECONDS:
+                self.touch_rules(namespace, service)
+            return list(cached[0])
+        return await self._fetch_rules_remote(namespace, service)
+
+    async def _fetch_rules_remote(self, namespace: str, service: str) -> List:
+        """Refresh one rule resource with a bounded overall query wait."""
         key = (namespace, service)
         try:
             request = InstanceDiscoverRequest(
                 type=DISCOVER_TYPE_LOSSLESS, name=service, namespace=namespace, revision="",
             )
-            response = await self._connector.discover(request)
+            async with asyncio.timeout(self._rule_query_timeout):
+                response = await self._connector.discover(request)
             rules = _extract_rules(response)
         except Exception as error:
             lossless_logger.warning("failed to fetch lossless rules for %s/%s: %s", namespace, service, error)
@@ -236,7 +249,7 @@ class LosslessManager:
 
         async def refresh() -> None:
             try:
-                await self.fetch_rules(namespace, service)
+                await self._fetch_rules_remote(namespace, service)
             finally:
                 self._rules_fetching.discard(key)
 
@@ -263,49 +276,63 @@ class LosslessManager:
             return _options_from_rule(rule, self._lossless_config)
         return _options_from_config(self._lossless_config)
 
+    def _next_register_generation(self, instance: LosslessInstance) -> int:
+        generation = self._register_generations.get(instance, 0) + 1
+        self._register_generations[instance] = generation
+        return generation
+
+    def _is_current_register(self, instance: LosslessInstance, generation: int) -> bool:
+        return not self._closed and self._register_generations.get(instance) == generation
+
     async def lossless_register(self, instance: LosslessInstance) -> None:
         """Gate the real registration behind delay or health checking."""
+        generation = self._next_register_generation(instance)
         provider = self._action_providers.get(instance)
         if provider is None:
             lossless_logger.warning("no lossless action provider for %s, skip lossless register", instance)
             return
         if not self.enabled:
             lossless_logger.info("lossless disabled, register %s directly", instance)
-            await self._do_register(instance)
+            await self._do_register(instance, generation)
             return
         options = await self.effective_options(instance)
+        if not self._is_current_register(instance, generation):
+            lossless_logger.info("lossless register for %s was superseded", instance)
+            return
         if not options.delay_register_enable:
             lossless_logger.info("delay register disabled for %s, register now", instance)
-            await self._do_register(instance)
+            await self._do_register(instance, generation)
             return
         previous = self._register_tasks.pop(instance, None)
         if previous is not None and not previous.done():
             previous.cancel()
         if options.strategy == DELAY_BY_HEALTH_CHECK and provider.is_enable_health_check():
             self._register_tasks[instance] = asyncio.create_task(
-                self._run_health_check_register(instance, options),
+                self._run_health_check_register(instance, options, generation),
                 name=f"polaris-lossless-register-{instance.namespace}-{instance.service}",
             )
         else:
             self._register_tasks[instance] = asyncio.create_task(
-                self._run_delayed_register(instance, options),
+                self._run_delayed_register(instance, options, generation),
                 name=f"polaris-lossless-register-{instance.namespace}-{instance.service}",
             )
 
-    async def _run_delayed_register(self, instance: LosslessInstance, options: LosslessOptions) -> None:
+    async def _run_delayed_register(
+            self, instance: LosslessInstance, options: LosslessOptions, generation: int) -> None:
         await asyncio.sleep(options.delay_register_interval_ms / 1000)
-        if self._closed:
+        if not self._is_current_register(instance, generation):
             return
         lossless_logger.info("lossless delay finished for %s, start register", instance)
-        await self._do_register(instance)
+        await self._do_register(instance, generation)
 
-    async def _run_health_check_register(self, instance: LosslessInstance, options: LosslessOptions) -> None:
+    async def _run_health_check_register(
+            self, instance: LosslessInstance, options: LosslessOptions, generation: int) -> None:
         provider = self._action_providers.get(instance)
         if provider is None:
             return
-        while not self._closed:
+        while self._is_current_register(instance, generation):
             await asyncio.sleep(options.health_check_interval_ms / 1000)
-            if self._closed:
+            if not self._is_current_register(instance, generation):
                 return
             try:
                 ready = await provider.do_health_check()
@@ -314,20 +341,28 @@ class LosslessManager:
                 ready = False
             if ready:
                 lossless_logger.info("lossless health check passed for %s, start register", instance)
-                await self._do_register(instance)
+                await self._do_register(instance, generation)
                 return
 
-    async def _do_register(self, instance: LosslessInstance) -> None:
+    async def _do_register(self, instance: LosslessInstance, generation: int | None = None) -> None:
+        if generation is not None and not self._is_current_register(instance, generation):
+            return
         provider = self._action_providers.get(instance)
         if provider is None:
             return
         properties = InstanceProperties()
         await provider.do_register(properties)
+        if generation is not None and not self._is_current_register(instance, generation):
+            lossless_logger.warning("lossless offline superseded registration for %s", instance)
+            await provider.do_deregister()
+            self._register_statuses[instance] = RegisterStatus.UNREGISTERED
+            return
         self._register_statuses[instance] = RegisterStatus.REGISTERED
         self._register_timestamps[instance] = time.time()
 
     async def lossless_deregister(self, instance: LosslessInstance) -> None:
         """Deregister immediately so consumers can remove the instance."""
+        self._next_register_generation(instance)
         provider = self._action_providers.get(instance)
         if provider is None:
             lossless_logger.warning("no lossless action provider for %s, skip lossless deregister", instance)
@@ -335,6 +370,7 @@ class LosslessManager:
         task = self._register_tasks.pop(instance, None)
         if task is not None and not task.done():
             task.cancel()
+        self._register_statuses[instance] = RegisterStatus.UNREGISTERED
         await provider.do_deregister()
         self._register_statuses[instance] = RegisterStatus.UNREGISTERED
 

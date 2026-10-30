@@ -36,7 +36,7 @@ from polaris import (
 )
 from polaris.plugin.server_connector.grpc_connector.connection import GrpcConnection
 from polaris.pkg.config.api import LosslessConfig
-from polaris.pkg.flow.lossless import LosslessManager, lossless_http_handlers
+from polaris.pkg.flow.lossless import LosslessManager, _options_from_rule, lossless_http_handlers
 from polaris.pkg.model.lossless import InstanceProperties, LosslessActionProvider
 from polaris.pkg.model.server import InstanceRegisterRequest
 from polaris.pkg.model.service import GetInstancesRequest, GetOneInstanceRequest
@@ -76,6 +76,18 @@ class FakeConnector:
         response = response_pb2.DiscoverResponse()
         response.losslessRuleList.extend(self.rules)
         return response
+
+
+class StalledConnector:
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def discover(self, request):
+        del request
+        self.entered.set()
+        await self.release.wait()
+        return response_pb2.DiscoverResponse()
 
 
 def lossless_configuration(**kwargs):
@@ -148,6 +160,55 @@ async def test_server_rule_overrides_local_delay():
     await manager.lossless_register(lossless_instance())
     assert provider.register_count == 1
     assert manager._register_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_rule_query_timeout_falls_back_to_local_configuration():
+    config = lossless_configuration(enable=True, delay_register_interval=1)
+    config.get_global().get_api().timeout = 20
+    manager = LosslessManager(config, StalledConnector())
+    provider = FakeActionProvider()
+    manager.set_action_provider(lossless_instance(), provider)
+    await asyncio.wait_for(manager.lossless_register(lossless_instance()), timeout=0.2)
+    await asyncio.sleep(0.05)
+    assert provider.register_count == 1
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_existing_rule_cache_is_returned_without_waiting_for_refresh():
+    config = lossless_configuration(enable=True)
+    config.get_global().get_api().timeout = 500
+    manager = LosslessManager(config, StalledConnector())
+    manager._rules_cache[("ns", "svc")] = ([], "", 0.0)
+    options = await asyncio.wait_for(manager.effective_options(lossless_instance()), timeout=0.05)
+    assert options.strategy == LosslessConfig.DELAY_BY_TIME
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_deregister_during_rule_query_prevents_late_registration():
+    connector = StalledConnector()
+    manager = LosslessManager(lossless_configuration(enable=True, delay_register_interval=1), connector)
+    provider = FakeActionProvider()
+    instance = lossless_instance()
+    manager.set_action_provider(instance, provider)
+    registering = asyncio.create_task(manager.lossless_register(instance))
+    await asyncio.wait_for(connector.entered.wait(), timeout=0.2)
+    await manager.lossless_deregister(instance)
+    connector.release.set()
+    await registering
+    await asyncio.sleep(0.05)
+    assert provider.deregister_count == 1
+    assert provider.register_count == 0
+    assert manager.check_register_status() == RegisterStatus.UNREGISTERED
+
+
+def test_server_delay_by_time_enum_zero_overrides_local_health_check():
+    rule = lossless_rule(strategy=lossless_pb2.DelayRegister.DELAY_BY_TIME)
+    config = lossless_configuration(enable=True, strategy=LosslessConfig.DELAY_BY_HEALTH_CHECK)
+    options = _options_from_rule(rule, config.get_provider().get_lossless())
+    assert options.strategy == LosslessConfig.DELAY_BY_TIME
 
 
 @pytest.mark.asyncio
@@ -347,7 +408,8 @@ class RegisterStub:
         return response_pb2.Response(code={"value": 200000})
 
 
-def make_context(monkeypatch, tmp_path, stub, *, provider=True, consumer=False, **lossless):
+def make_context(monkeypatch, tmp_path, stub, *, provider=True, consumer=False,
+                 admin_port=None, **lossless):
     async def fake_stub(connection, address):
         return stub
 
@@ -357,7 +419,10 @@ def make_context(monkeypatch, tmp_path, stub, *, provider=True, consumer=False, 
             "api": {"bindIP": "127.0.0.1"},
             "serverConnector": {"addresses": ["registry:8091"]},
             "statReporter": {"enable": False},
-            "admin": {"host": "127.0.0.1", "port": 0 if provider else -1},
+            "admin": {
+                "host": "127.0.0.1",
+                "port": (0 if provider else -1) if admin_port is None else admin_port,
+            },
         },
     }
     if provider:
@@ -411,6 +476,46 @@ async def test_provider_api_lossless_register_and_deregister(monkeypatch, tmp_pa
         deregister = next(call[1] for call in stub.calls if call[0] == "DeregisterInstance")
         assert deregister.id.value == "registered"
         assert context.engine.lossless_manager.check_register_status() == RegisterStatus.UNREGISTERED
+    finally:
+        context.destroy()
+
+
+@pytest.mark.asyncio
+async def test_repeated_lossless_register_uses_latest_request(monkeypatch, tmp_path):
+    stub = RegisterStub()
+    context = make_context(
+        monkeypatch, tmp_path, stub, admin_port=-1, delayRegisterInterval="1ms",
+    )
+    provider = ProviderAPI(context)
+    first = instance_request()
+    first.weight = 100
+    first.metadata = {"version": "v1"}
+    second = instance_request()
+    second.weight = 700
+    second.metadata = {"version": "v2"}
+    second.service_token = "new-token"
+
+    async def wait_for_registrations(count):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            registrations = [request for method, request, _ in stub.calls if method == "RegisterInstance"]
+            if len(registrations) >= count:
+                return registrations
+            await asyncio.sleep(0.01)
+        raise AssertionError("registration did not complete")
+
+    try:
+        await provider.async_lossless_register(first)
+        await wait_for_registrations(1)
+        await provider.async_lossless_deregister(first)
+        assert not stub.instances
+
+        await provider.async_lossless_register(second)
+        registrations = await wait_for_registrations(2)
+        assert [request.weight.value for request in registrations] == [100, 700]
+        assert registrations[1].metadata["version"] == "v2"
+        assert registrations[1].service_token.value == "new-token"
+        assert second.instance_id == "registered"
     finally:
         context.destroy()
 
