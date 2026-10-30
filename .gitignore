@@ -50,4 +50,3 @@ polaris-*.log
 .polaris_multicontext/
 .polaris_cache/
 /.agents/
-.DS_Store
