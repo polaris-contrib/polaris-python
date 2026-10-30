@@ -4,3 +4,12 @@
 global:
   serverConnector:
     addresses: [127.0.0.1:8091]
+
+# Lossless online/offline; see docs/lossless.md.
+# provider:
+#   lossless:
+#     enable: true
+#     strategy: DELAY_BY_TIME
+#     delayRegisterInterval: 30s
+#     healthCheckInterval: 5s
+#     healthCheckPath: /ready

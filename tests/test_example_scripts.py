@@ -17,6 +17,8 @@
 
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -29,6 +31,8 @@ import pytest
 
 from examples._internal import _manage as manager, _runtime as runtime
 from examples._internal._real_verify import cache_backup_glob, e2e_namespace, service_name
+from examples._internal._runtime import configure_e2e_event_reporting, get_local_host
+from polaris import Configuration
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -52,6 +56,76 @@ def test_real_verification_registers_into_python_integration(monkeypatch):
     assert e2e_namespace() == "custom"
 
 
+def test_real_verification_event_reporter_uses_pushgateway(monkeypatch):
+    monkeypatch.setenv("POLARIS_EVENT_REPORTER_ADDRESS", "1.14.219.4:9091")
+    monkeypatch.setenv("POLARIS_EVENT_REPORTER_PUSH_INTERVAL", "250")
+    config = Configuration()
+    config.set_default()
+    configure_e2e_event_reporting(config)
+    reporter = config.get_global().get_event_reporter()
+    pushgateway = reporter.get_pushgateway()
+    assert reporter.enable is True
+    assert reporter.chain == ["pushgateway"]
+    assert pushgateway.address == ["1.14.219.4:9091"]
+    assert pushgateway.push_interval == 250
+
+
+def test_real_instance_host_uses_polaris_route_source_ip(monkeypatch):
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        @staticmethod
+        def getsockname():
+            return "10.6.85.49", 54321
+
+    monkeypatch.setattr(runtime.socket, "create_connection", lambda *args, **kwargs: Connection())
+    assert get_local_host("1.14.219.4:8091") == "10.6.85.49"
+
+
+@pytest.mark.parametrize("relative_path", [
+    "quickstart/provider/main.py",
+    "circuitbreaker/provider/main.py",
+    "multicontext/main.py",
+    "mcp/main.py",
+    "a2a/main.py",
+    "monitoring/main.py",
+    "lossless/provider/main.py",
+])
+def test_real_instance_registration_uses_local_route_host(relative_path):
+    source = (REPO / "examples" / relative_path).read_text(encoding="utf-8")
+    assert "get_local_host(" in source
+
+
+@pytest.mark.parametrize("relative_path", [
+    "quickstart/provider/main.py",
+    "quickstart/consumer/main.py",
+    "circuitbreaker/provider/main.py",
+    "circuitbreaker/consumer/main.py",
+    "sdkconfig/code/main.py",
+    "sdkconfig/file/main.py",
+    "cache/expiry/main.py",
+    "cache/restart/main.py",
+    "loadbalancer/random/main.py",
+    "loadbalancer/wr/main.py",
+    "servicerouter/main.py",
+    "multicontext/main.py",
+    "mcp/main.py",
+    "skill/main.py",
+    "a2a/main.py",
+    "monitoring/main.py",
+    "events/main.py",
+    "lossless/provider/main.py",
+    "lossless/consumer/main.py",
+])
+def test_real_demo_entries_apply_e2e_event_reporting(relative_path):
+    source = (REPO / "examples" / relative_path).read_text(encoding="utf-8")
+    assert "configure_e2e_event_reporting(config)" in source
+
+
 @pytest.mark.parametrize("name", ["mcp", "skill", "a2a", "monitoring", "events"])
 def test_ai_example_default_does_not_create_context_or_connect(monkeypatch, name):
     import importlib
@@ -62,6 +136,22 @@ def test_ai_example_default_does_not_create_context_or_connect(monkeypatch, name
         raise AssertionError("default example must not create an SDK context")
 
     monkeypatch.setattr(example, "init_context_by_config", unexpected_context)
+    assert example.main([]) == 0
+
+
+@pytest.mark.parametrize("name, factory", [
+    ("lossless.provider", "create_provider_by_config"),
+    ("lossless.consumer", "create_consumer_by_config"),
+])
+def test_lossless_example_default_does_not_create_context_or_connect(monkeypatch, name, factory):
+    import importlib
+    example = importlib.import_module(f"examples.{name}.main")
+    monkeypatch.delenv("POLARIS_E2E", raising=False)
+
+    def unexpected_context(*args, **kwargs):
+        raise AssertionError("default lossless example must not create an SDK context")
+
+    monkeypatch.setattr(example, factory, unexpected_context)
     assert example.main([]) == 0
 
 
@@ -89,6 +179,8 @@ def test_multicontext_verifier_checks_post_exit_cleanup(tmp_path, monkeypatch):
     ("sdkconfig/file/main.py", ("consumer.get_instances(",)),
     ("multicontext/main.py", ("sync_discover(", "consumer.get_instances(")),
     ("events/main.py", ("consumer.get_instances(", "get_event_center().register_listener(")),
+    ("lossless/provider/main.py", ("provider.async_lossless_register(", "provider.async_lossless_deregister(")),
+    ("lossless/consumer/main.py", ("consumer.async_get_one_instance(",)),
 ])
 def test_demo_default_or_verifier_paths_cover_synchronous_apis(relative_path, calls):
     source = (REPO / "examples" / relative_path).read_text(encoding="utf-8")
@@ -125,11 +217,26 @@ def test_scenario_documentation_describes_verification(name):
         assert not list(directory.glob("*.sh"))
 
 
+def test_example_registry_matches_makefile_and_scenario_files():
+    makefile = (REPO / "examples" / "Makefile").read_text(encoding="utf-8")
+    match = re.search(r"^SUBDIRS\s*:=\s*(.+)$", makefile, re.MULTILINE)
+    assert match is not None
+    makefile_entries = set(match.group(1).split())
+    registry_entries = {name.split("/", 1)[0] for name in manager.VERIFIERS}
+    registry_entries.update(name for name in manager.GROUPS if name)
+    assert makefile_entries == registry_entries
+    for name, (script, _) in manager.VERIFIERS.items():
+        assert (REPO / "examples" / script).is_file(), name
+
+
 @pytest.mark.parametrize("script", ["verify.sh", "verify_e2e.sh", "logs.sh", "cleanup.sh"])
 def test_root_example_scripts_print_usage(script):
     path = REPO / "examples" / script
     assert os.access(path, os.X_OK)
-    result = subprocess.run([str(path), "--help"], cwd=REPO,
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("Bash is unavailable")
+    result = subprocess.run([bash, path.as_posix(), "--help"], cwd=REPO,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
@@ -355,6 +462,7 @@ def test_verification_timeout_reaps_a_quiet_process_and_retains_failure(example_
     assert result.with_name("console.log").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not deliver SIGTERM to Python handlers")
 def test_interrupted_verification_retains_result_even_when_child_exits_cleanly(example_tree):
     selected = example_tree / "sdkconfig/code"
     entry = selected / "verify.py"

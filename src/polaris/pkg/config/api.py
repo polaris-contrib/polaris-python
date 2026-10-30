@@ -634,7 +634,8 @@ class CircuitBreakerConfig:
 class ConsumerConfig(SelfVerifier):
     def __init__(self, local_cache: LocalCacheConfig = None, service_router: ServiceRouterConfig = None,
                  load_balance: LoadBalancerConfig = None,
-                 circuit_breaker: CircuitBreakerConfig = None):
+                 circuit_breaker: CircuitBreakerConfig = None,
+                 weight_adjust: "WeightAdjustConfig" = None):
         # 	LocalCache       *LocalCacheConfigImpl       `yaml:"localCache"`
         # 	ServiceRouter    *ServiceRouterConfigImpl    `yaml:"serviceRouter"`
         # 	Loadbalancer     *LoadBalancerConfigImpl     `yaml:"loadbalancer"`
@@ -643,6 +644,7 @@ class ConsumerConfig(SelfVerifier):
         self.service_router = service_router
         self.load_balance = load_balance
         self.circuit_breaker = circuit_breaker
+        self.weight_adjust = weight_adjust
 
     def get_service_router(self) -> ServiceRouterConfig:
         return self.service_router
@@ -655,6 +657,9 @@ class ConsumerConfig(SelfVerifier):
 
     def get_local_cache(self) -> LocalCacheConfig:
         return self.local_cache
+
+    def get_weight_adjust(self) -> "WeightAdjustConfig":
+        return self.weight_adjust
 
     def verify(self):
         try:
@@ -673,6 +678,8 @@ class ConsumerConfig(SelfVerifier):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
                            "ConsumerConfig: load_balance check err: %s" % err.msg)
         self.circuit_breaker.verify()
+        if self.weight_adjust is not None:
+            self.weight_adjust.verify()
 
     def set_default(self):
         if not self.local_cache:
@@ -683,11 +690,43 @@ class ConsumerConfig(SelfVerifier):
             self.load_balance = LoadBalancerConfig()
         if not self.circuit_breaker:
             self.circuit_breaker = CircuitBreakerConfig()
+        if not self.weight_adjust:
+            self.weight_adjust = WeightAdjustConfig()
         self.load_balance.set_default()
         self.service_router.set_default()
         self.local_cache.set_default()
         self.service_router.set_default()
         self.circuit_breaker.set_default()
+        self.weight_adjust.set_default()
+
+
+class WeightAdjustConfig(SelfVerifier):
+    """Configure dynamic instance weight adjusters such as warmup."""
+
+    def __init__(self, enable: bool | None = None, chain: List[str] = None):
+        self.enable = enable
+        self.chain = chain
+
+    def is_enable(self) -> bool:
+        return self.enable
+
+    def get_chain(self) -> List[str]:
+        return self.chain
+
+    def set_default(self):
+        if self.enable is None:
+            self.enable = True
+        if self.chain is None:
+            self.chain = []
+
+    def verify(self):
+        if not isinstance(self.enable, bool):
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "ConsumerConfig: weight_adjust.enable must be a boolean")
+        if (not isinstance(self.chain, list)
+                or any(not isinstance(name, str) or not name for name in self.chain)):
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "ConsumerConfig: weight_adjust.chain must be a list of plugin names")
 
 
 # 对接注册中心相关配置
@@ -878,26 +917,107 @@ class GlobalConfig(SelfVerifier):
         self.event_reporter.set_default()
 
 
-class ProviderConfig(SelfVerifier):
-    """Configure the minimum interval before automatic instance re-registration."""
+class LosslessConfig(SelfVerifier):
+    """Configure lossless online/offline behaviour, aligned with the Java SDK."""
 
-    def __init__(self, min_register_interval: int | None = None):
+    DELAY_BY_TIME = "DELAY_BY_TIME"
+    DELAY_BY_HEALTH_CHECK = "DELAY_BY_HEALTH_CHECK"
+    STRATEGIES = (DELAY_BY_TIME, DELAY_BY_HEALTH_CHECK)
+
+    def __init__(self, enable: bool | None = None, strategy: str | None = None,
+                 delay_register_interval: int | None = None, health_check_interval: int | None = None,
+                 health_check_protocol: str = "http", health_check_path: str = "",
+                 health_check_method: str = "GET"):
+        self.enable = enable
+        self.strategy = strategy
+        self.delay_register_interval = delay_register_interval
+        self.health_check_interval = health_check_interval
+        self.health_check_protocol = health_check_protocol
+        self.health_check_path = health_check_path
+        self.health_check_method = health_check_method
+
+    def is_enable(self) -> bool:
+        return self.enable
+
+    def get_strategy(self) -> str:
+        return self.strategy
+
+    def get_delay_register_interval(self) -> int:
+        return self.delay_register_interval
+
+    def get_health_check_interval(self) -> int:
+        return self.health_check_interval
+
+    def get_health_check_protocol(self) -> str:
+        return self.health_check_protocol
+
+    def get_health_check_path(self) -> str:
+        return self.health_check_path
+
+    def get_health_check_method(self) -> str:
+        return self.health_check_method
+
+    def set_default(self):
+        if self.enable is None:
+            self.enable = False
+        if self.strategy is None:
+            self.strategy = self.DELAY_BY_TIME
+        if self.delay_register_interval is None:
+            self.delay_register_interval = 30000
+        if self.health_check_interval is None:
+            self.health_check_interval = 5000
+
+    def verify(self):
+        if not isinstance(self.enable, bool):
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "ProviderConfig: lossless.enable must be a boolean")
+        if self.strategy not in self.STRATEGIES:
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "ProviderConfig: lossless.strategy must be one of %s" % ", ".join(self.STRATEGIES))
+        for name in ("delay_register_interval", "health_check_interval"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                               f"ProviderConfig: lossless.{name} must be positive integer milliseconds")
+        for name in ("health_check_protocol", "health_check_path", "health_check_method"):
+            if not isinstance(getattr(self, name), str):
+                raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                               f"ProviderConfig: lossless.{name} must be a string")
+        if self.health_check_protocol != "http":
+            raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                           "ProviderConfig: lossless.healthCheckProtocol only supports http")
+
+
+class ProviderConfig(SelfVerifier):
+    """Configure provider registration, re-registration and lossless lifecycle."""
+
+    def __init__(self, min_register_interval: int | None = None, lossless: LosslessConfig = None):
         self.min_register_interval = min_register_interval
+        self.lossless = lossless
 
     def get_min_register_interval(self) -> int:
         """Return the minimum re-registration interval in milliseconds."""
         return self.min_register_interval
 
+    def get_lossless(self) -> LosslessConfig:
+        """Return the lossless online/offline configuration."""
+        return self.lossless
+
     def set_default(self):
         if (self.min_register_interval is None
                 or type(self.min_register_interval) is int and self.min_register_interval == 0):
             self.min_register_interval = 30000
+        if not self.lossless:
+            self.lossless = LosslessConfig()
+        self.lossless.set_default()
 
     def verify(self):
         if (isinstance(self.min_register_interval, bool)
                 or not isinstance(self.min_register_interval, int) or self.min_register_interval <= 0):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
                            "ProviderConfig: minRegisterInterval must be positive integer milliseconds")
+        if self.lossless is not None:
+            self.lossless.verify()
 
 
 class SkillConnectorConfig(SelfVerifier):

@@ -80,8 +80,9 @@ Provider 提供：
 - service token：`example-token`。
 
 实际端口可在 `console.log` 的注册和调用 JSON 中查看。`run.sh` 默认启动一个实例并
-注册到 `default/CircuitBreakerCallee`，host `127.0.0.1`、port `18081`、TTL 5 秒；
-传入 `--port 0` 可改为动态端口。
+注册到 `default/CircuitBreakerCallee`，host 使用到 Polaris 建连时的
+`get_local_host` 源 IP、port `18081`、TTL 5 秒；传入 `--port 0` 可改为动态端口，
+显式传入 `--host` 时以应用提供的可达地址为准。
 
 ## 远端验证
 
@@ -98,7 +99,9 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 
 步骤：
 
-1. 本目录 `main.py` 使用 `--host 127.0.0.1 --port 0 --status 200 --ttl 3`。监听动态端口，注册地址就是 `127.0.0.1` 加这个端口，然后持续心跳。
+1. 本目录 `main.py` 使用 `--port 0 --status 200 --ttl 3`。注册 host 默认通过
+   `get_local_host(POLARIS_SERVER_ADDRESS)` 取本机到 Polaris 的 TCP 源 IP。
+   监听动态端口，然后把该 IP 和实际端口注册并持续心跳。
 2. 验证器最多等 20 秒，确认发现结果含这次的 instance id。
 3. Consumer 调用 `/echo`。因为 Provider 固定返回 200，熔断状态应保持 `closed`，`ret_code` 为 200。
 4. `/instances` 只有这一个实例。两个进程都保持运行，验证器不反注册，也不把状态切到 500。

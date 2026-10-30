@@ -22,25 +22,18 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
 
 import argparse
 import json
 import signal
-import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from examples._internal._runtime import get_local_host
 from polaris.api.provider import ProviderAPI, create_provider_by_config
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
-from polaris.pkg.model.util import get_ip_from_int_with_port
-
-
-def getLocalHost(serverAddress):
-    host, port = get_ip_from_int_with_port(serverAddress)
-    with socket.create_connection((host, port), timeout=2) as connection:
-        return connection.getsockname()[0]
 
 
 class ProviderHandler(BaseHTTPRequestHandler):
@@ -93,6 +86,7 @@ def main() -> int:
     try:
         config_path = args.config or Path(__file__).with_name("polaris.yaml")
         config = Configuration.from_file(str(config_path))
+        configure_e2e_event_reporting(config)
         config.get_consumer().get_local_cache().persist_dir = str(
             demo_backup_directory(__file__, component="provider")
         )
@@ -101,7 +95,7 @@ def main() -> int:
             log_options=demo_log_options(__file__, component="provider"),
         )
         connector = provider.context.get_config().get_global().get_server_connector()
-        host = getLocalHost(connector.get_addresses()[0])
+        host = get_local_host(connector.get_addresses()[0])
 
         server = ThreadingHTTPServer(("0.0.0.0", args.port), ProviderHandler)
         server.daemon_threads = True

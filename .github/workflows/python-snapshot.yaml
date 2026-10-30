@@ -1,0 +1,169 @@
+name: Snapshot-Python
+
+on:
+  push:
+    branches:
+      - main
+      - release/*
+      - develop
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/python-snapshot.yaml'
+      - '!src/**.md'
+      - '!tests/**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-snapshot:
+    name: Check development version
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/develop' ||
+      startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    outputs:
+      IS_SNAPSHOT: ${{ steps.check_version.outputs.IS_SNAPSHOT }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - name: Check package version
+        id: check_version
+        run: |
+          uv run --no-project --with packaging python - <<'PY'
+          import os
+          import runpy
+          from pathlib import Path
+
+          from packaging.version import Version
+
+          configured = Version(runpy.run_path("src/polaris/_version.py")["__version__"])
+          is_snapshot = configured.dev is not None
+          if is_snapshot and configured.local is not None:
+              raise SystemExit("PyPI development releases must not have a local version label")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              print(f"IS_SNAPSHOT={str(is_snapshot).lower()}", file=output)
+          print(f"{configured}: snapshot={is_snapshot}")
+          PY
+
+  build:
+    name: Build and verify development distributions
+    needs: check-snapshot
+    if: ${{ needs.check-snapshot.outputs.IS_SNAPSHOT == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - name: Verify lockfile
+        run: uv lock --check
+      - name: Set development version
+        id: version
+        run: |
+          uv run --no-project --with packaging python - <<'PY'
+          import ast
+          import os
+          from pathlib import Path
+
+          from packaging.version import Version
+
+          about = Path("src/polaris/_version.py")
+          text = about.read_text(encoding="utf-8")
+          assignments = [
+              node for node in ast.parse(text).body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__"
+                      for target in node.targets)
+          ]
+          if len(assignments) != 1 or len(assignments[0].targets) != 1:
+              raise SystemExit(f"expected one __version__ assignment in {about}")
+          assignment = assignments[0]
+          configured = Version(ast.literal_eval(assignment.value))
+          if configured.dev is None or configured.local is not None:
+              raise SystemExit(f"{configured} is not a public development version")
+          run_number = int(os.environ["GITHUB_RUN_NUMBER"])
+          if run_number <= 0:
+              raise SystemExit("GITHUB_RUN_NUMBER must be positive")
+          base = str(configured).rsplit(".dev", 1)[0]
+          version = str(Version(f"{base}.dev{run_number}"))
+          lines = text.splitlines(keepends=True)
+          lines[assignment.lineno - 1:assignment.end_lineno] = [f'__version__ = "{version}"\n']
+          about.write_text("".join(lines), encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              print(f"VERSION={version}", file=output)
+          print(f"{configured} -> {version}")
+          PY
+      - name: Build distributions
+        run: uv build
+      - name: Create clean wheel environment
+        run: uv venv "$RUNNER_TEMP/polaris-snapshot-venv" --python 3.12
+      - name: Install wheel with dependencies
+        run: |
+          uv pip install --python "$RUNNER_TEMP/polaris-snapshot-venv/bin/python" \
+            dist/*.whl \
+            "pytest>=8.3,<9" \
+            "pytest-asyncio>=0.24,<0.25"
+      - name: Verify installed distribution
+        working-directory: ${{ runner.temp }}
+        env:
+          SNAPSHOT_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          "$RUNNER_TEMP/polaris-snapshot-venv/bin/python" - <<'PY'
+          import os
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          import polaris
+          from polaris import Configuration
+
+          assert version("polaris-python") == polaris.__version__ == os.environ["SNAPSHOT_VERSION"]
+          assert Path(polaris.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+          assert all(hasattr(polaris, name) for name in (
+              "ConsumerAPI", "ProviderAPI", "SkillAPI", "SDKContext", "SDKError",
+          ))
+          config = Configuration()
+          config.set_default()
+          assert config.get_global().get_server_connector().get_protocol() == "grpc"
+          print(f"verified polaris-python {polaris.__version__} from {polaris.__file__}")
+          PY
+      - name: Run tests against installed wheel
+        run: |
+          "$RUNNER_TEMP/polaris-snapshot-venv/bin/python" -m pytest tests -q -m "not e2e"
+      - name: Upload verified distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: polaris-python-snapshot-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish development package to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: Release
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: polaris-python-snapshot-dist
+          path: dist/
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/
+          print-hash: true
+          # Reruns keep the same run number and package version.
+          skip-existing: true

@@ -13,7 +13,8 @@ uv run --locked python examples/circuitbreaker/provider/main.py --port 18082 --s
 `/switch?status=404` 可指定 200..599 范围内的其他状态码。非法参数返回 400，原状态不变。
 控制接口没有鉴权，仅用于测试。
 
-`--host` 是显式指定的业务注册地址，不是 SDK `bindIP`。
+注册 IP 默认通过 `get_local_host(POLARIS_SERVER_ADDRESS)` 获取；`--host` 可显式覆盖，
+它不是 SDK `bindIP`。
 `--service-token` 默认读取 `POLARIS_SERVICE_TOKEN`。使用 `register_instance()` 注册并自动心跳，
 `--ttl` 默认 5 秒。Ctrl+C / SIGTERM 停止 HTTP、反注册并销毁 context。
 `--port 0` 选择临时端口，启动时打印端口和实例 ID。

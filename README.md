@@ -19,6 +19,8 @@ uv run pytest
 The project uses a `src` layout. `uv sync` installs `src/polaris/` in editable mode,
 so source changes take effect immediately.
 
+See [Package releases](docs/releasing.md) for release and development package publishing.
+
 ## Configure
 
 ```yaml
@@ -90,8 +92,9 @@ implicitly deregister instances.
 ## Consumer
 
 Reuse one `ConsumerAPI` per context. Synchronous calls are `get_one_instance()`,
-`get_instances()`, `get_all_instances()`, and `get_healthy_instances()`; every method
-has an `async_` form.
+`get_instances()`, `get_all_instances()`, `get_healthy_instances()`, and
+`get_services()`; query methods have `async_` counterparts. `watch_service()` pins a
+loaded resource and forwards cache lifecycle events; `unwatch_service()` releases it.
 
 ```python
 from polaris.pkg.model.service import GetOneInstanceRequest

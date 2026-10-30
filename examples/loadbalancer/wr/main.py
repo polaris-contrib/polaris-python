@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
@@ -44,6 +44,7 @@ def get_api():
     if not CONSUMER_INSTANCE:
         config = Configuration()
         config.set_default()
+        configure_e2e_event_reporting(config)
         connector = config.get_global().get_server_connector()
         connector.addresses = [os.getenv("POLARIS_SERVER", "127.0.0.1:8091")]
         connector.token = os.getenv("POLARIS_TOKEN", "")

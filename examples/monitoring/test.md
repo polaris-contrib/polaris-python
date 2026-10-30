@@ -24,7 +24,8 @@ Push 使用默认配置模型和 1 秒推送间隔，验证收到 POST
 离线 namespace 为 ns；service 为 echo，HTTP echo 使用 127.0.0.1 和操作系统动态分配的端口。
 注册中心使用 offline:8091 的 RPC 替身，不向该地址建立真实连接。
 指标监听与 Pushgateway 接收器也使用动态端口，避免与其他 context 冲突。
-服务 token 为测试值 token。真实业务 host 必须由应用显式提供，SDK bindIP 不是注册 IP。
+服务 token 为测试值 token。真实入口默认把 `get_local_host(POLARIS_SERVER_ADDRESS)`
+作为注册 IP，也可用 `--host` 显式覆盖；SDK bindIP 不是注册 IP。
 
 ## 执行产物与解读
 
@@ -53,12 +54,17 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 
 步骤：
 
-1. 在 `127.0.0.1` 的动态端口启动 HTTP echo，向注册中心注册，协议 http，TTL 5 秒。指标监听也是动态端口，模式固定为 push，推送间隔用示例默认的 10 秒。
+1. 使用 `get_local_host(POLARIS_SERVER_ADDRESS)` 取得本机到 Polaris 的 TCP 源 IP，
+   在该 IP 的动态端口启动 HTTP echo 并注册，协议 http，TTL 5 秒。指标监听也是
+   动态端口，模式固定为 push，推送间隔用示例默认的 10 秒。
 2. 最多等 40 秒，直到 `get_one_instance` 能看到刚注册的实例。
 3. 对这个实例依次请求 `/echo?status=200`、`503`、`200`。每次调用后 `async_update_service_call_result`：状态码小于 500 记成功，503 记失败。主调服务名是 `demo-caller`。
 4. 再等待默认 31 秒，让至少一个推送周期完成。
 5. 退出时按 instance id 反注册并销毁 context。
 
-通过条件是最后一行 JSON 里 `mode` 为 `push`、`calls` 为 3、`pushes` 至少为 1。远端 Pushgateway 不把这三次调用回显到 `/metrics`，所以不读回指标正文。离线验证里的 pull `/metric` 和 0.1 秒聚合周期不在这一路执行。
+通过条件是最后一行 JSON 里 `mode` 为 `push`、`calls` 为 3、`pushes` 至少为 1，
+且 `host` 等于远端验证器计算出的本机路由源 IP。远端 Pushgateway 不把这三次调用
+回显到 `/metrics`，所以不读回指标正文。离线验证里的 pull `/metric` 和
+0.1 秒聚合周期不在这一路执行。
 
 运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`console.log` 里有验证器 JSON，`monitoring.stdout.log` 是示例输出，`result.json` 的 `exit_code` 为 0 才通过。Polaris 上的服务对象会留下，用 `./examples/cleanup.sh --delete-services` 删除 `polaris-python-e2e-` 前缀的服务。注册后一直发现不到实例、Pushgateway 非 2xx、或反注册失败，都会非零退出。

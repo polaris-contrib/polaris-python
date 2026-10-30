@@ -29,10 +29,13 @@ from polaris.pkg.flow.base_flow import CacheFilter
 from polaris.pkg.flow.base_flow import CacheResult
 from polaris.pkg.flow.base_flow import RealTimeLimitTask
 from polaris.pkg.flow.base_flow import get_load_cache_values
+from polaris.pkg.flow.admin_server import AdminHttpServer
+from polaris.pkg.flow.lossless import LosslessManager, lossless_http_handlers
 from polaris.pkg.flow.register import RegisterStateManager
 from polaris.pkg.model.context import *
 from polaris.pkg.model.core import *
 from polaris.pkg.model.event import SDKEventName, SDKEventType, SDKEventStatus, now_event
+from polaris.pkg.model.lossless import LosslessInstance
 from polaris.pkg.model.engine import BaseEngine
 from polaris.pkg.model.rule import *
 from polaris.pkg.model.server import *
@@ -141,6 +144,10 @@ class Engine(BaseEngine):
         self.register_states = RegisterStateManager(
             self._do_register, self._async_heartbeat, min_register_interval,
         )
+        self.lossless_manager = LosslessManager(config, None) if config is not None else None
+        self._lossless_owned_providers = {}
+        self.admin_server = AdminHttpServer(
+            config.get_global().get_admin()) if config is not None else None
         # 全局配置
         self.configuration = config
         # 服务端连接器
@@ -292,6 +299,8 @@ class Engine(BaseEngine):
                 loop.run_until_complete(self.init_self_ip())
                 if self.stat_reporter is not None:
                     loop.run_until_complete(self.stat_reporter.start(self))
+                if self.admin_server is not None:
+                    loop.run_until_complete(self.admin_server.start())
                 for event_reporter in self.event_reporters:
                     loop.run_until_complete(event_reporter.start(self))
                 logger.warning("start timing update job")
@@ -422,6 +431,8 @@ class Engine(BaseEngine):
 
     async def _shutdown(self):
         current = asyncio.current_task()
+        if self.lossless_manager is not None:
+            await self.lossless_manager.close()
         for event_reporter in self.event_reporters:
             await event_reporter.close()
         self.event_reporters = []
@@ -436,6 +447,8 @@ class Engine(BaseEngine):
         await self.register_states.close()
         if self.stat_reporter is not None:
             await self.stat_reporter.close()
+        if self.admin_server is not None:
+            await self.admin_server.close()
         close = getattr(self.svc_connector, "close", None)
         if close is not None:
             await close()
@@ -493,6 +506,17 @@ class Engine(BaseEngine):
     async def async_get_healthy_instances(self, req):
         return await self._run_async(self._query_instances(req, "healthy"))
 
+    def sync_get_services(self):
+        """Return service resources currently held by this context."""
+        return self._run_sync(self._async_get_services())
+
+    async def async_get_services(self):
+        """Return service resources currently held by this context."""
+        return await self._run_async(self._async_get_services())
+
+    async def _async_get_services(self):
+        return tuple(self.registry.get_services())
+
     async def _query_instances(self, req, mode, load=True):
         from polaris.pkg.model.service import InstancesResponse
         result = await self._async_get_instances(req, load=load)
@@ -506,6 +530,8 @@ class Engine(BaseEngine):
     async def _async_get_instances(self, req: GetInstancesRequest, do_balance: bool = True,
                                    load: bool = True) -> CacheResult:
         req = self.set_default_value_for_instances_request(req)
+        if self._warmup_enabled():
+            self.lossless_manager.touch_rules(req.get_namespace(), req.get_service())
         request = self.instance_request_to_cache_filter(req=req, redirect_service=None)
         result = await get_load_cache_values(self.registry, request, load, req.use_discover_cache, req.timeout)
         return result
@@ -535,6 +561,8 @@ class Engine(BaseEngine):
         """Apply the configured router chain and load balancer to an instance snapshot."""
 
         service_instances = self.filter_instances(req, instances)
+        if self._warmup_enabled():
+            service_instances = self.lossless_manager.apply_warmup_weights(service_instances)
         result = self.load_balancer.choose_instance(service_instances)
         if result is not None and self.circuit_breaker_chain:
             status = result.get_circuit_breaker_status()
@@ -553,6 +581,12 @@ class Engine(BaseEngine):
                 route_logger.warning("all instances unavailable; returning %s:%d without half-open permit",
                                      result.get_host(), result.get_port())
         return result
+
+    def _warmup_enabled(self) -> bool:
+        if self.lossless_manager is None:
+            return False
+        weight_adjust = self.configuration.get_consumer().get_weight_adjust()
+        return weight_adjust.is_enable() and "warmup" in weight_adjust.get_chain()
 
     def filter_instances(self, req, instances, healthy_only=False):
         """Filter a copied list without balancing or allocating half-open permits."""
@@ -657,6 +691,68 @@ class Engine(BaseEngine):
                     namespace=outgoing.namespace, service=outgoing.service,
                     instance_id=outgoing.instance_id, host=outgoing.host, port=outgoing.port,
                 ))
+
+    def sync_lossless_register(self, req: InstanceRegisterRequest) -> None:
+        """Run lossless online for one instance on the SDK event loop."""
+        return self._run_sync(self._async_lossless_register(req))
+
+    async def async_lossless_register(self, req: InstanceRegisterRequest) -> None:
+        """Asynchronously run lossless online through the SDK loop."""
+        return await self._run_async(self._async_lossless_register(req))
+
+    async def _async_lossless_register(self, req: InstanceRegisterRequest) -> None:
+        instance = LosslessInstance.from_register_request(req)
+        self._ensure_lossless_provider(req, instance)
+        await self.lossless_manager.lossless_register(instance)
+
+    def sync_lossless_deregister(self, req) -> None:
+        """Run lossless offline for one instance on the SDK event loop."""
+        return self._run_sync(self._async_lossless_deregister(req))
+
+    async def async_lossless_deregister(self, req) -> None:
+        """Asynchronously run lossless offline through the SDK loop."""
+        return await self._run_async(self._async_lossless_deregister(req))
+
+    async def _async_lossless_deregister(self, req) -> None:
+        instance = self._lossless_instance_for(req)
+        if self.lossless_manager.get_action_provider(instance) is None:
+            self._ensure_lossless_provider(req, instance)
+        await self.lossless_manager.lossless_deregister(instance)
+
+    @staticmethod
+    def _lossless_instance_for(req) -> LosslessInstance:
+        metadata = dict(getattr(req, "metadata", {}) or {})
+        return LosslessInstance(
+            namespace=req.namespace, service=req.service,
+            host=req.host, port=req.port, metadata=metadata,
+        )
+
+    def _ensure_lossless_provider(self, req: InstanceRegisterRequest, instance: LosslessInstance) -> None:
+        from polaris.pkg.flow.lossless import HttpLosslessActionProvider
+
+        async def register_action(_properties):
+            await self._async_register(req)
+
+        async def deregister_action():
+            deregister = InstanceDeRegisterRequest(
+                service=req.service, service_token=req.service_token, namespace=req.namespace,
+                host=req.host, port=req.port, instance_id=getattr(req, "instance_id", ""),
+                timeout=self.default_api_timeout,
+                retry_count=self.configuration.get_global().get_api().get_max_retry_times(),
+            )
+            await self._async_deregister(deregister)
+
+        manager = self.lossless_manager
+        existing = manager.get_action_provider(instance)
+        if existing is not None and self._lossless_owned_providers.get(instance) is not existing:
+            return
+        provider = HttpLosslessActionProvider(
+            instance, register_action, deregister_action,
+            strategy_resolver=lambda: manager.cached_options(instance).strategy,
+            health_check_path_resolver=lambda: manager.cached_options(instance).health_check_path,
+        )
+        manager.set_action_provider(instance, provider)
+        self._lossless_owned_providers[instance] = provider
 
     def sync_heartbeat(self, req: InstanceHeartbeatRequest) -> None:
         """Send an instance heartbeat on the SDK event loop."""
@@ -793,9 +889,9 @@ class Engine(BaseEngine):
     def get_now_ts():
         return int(time.time() * 1000)
 
-    # 同步获取服务规则
+    # 获取服务规则
     async def sync_get_service_rule(self, event_type: int, req: GetServiceRuleRequest) -> ServiceRuleResponse:
-        """Load a service rule through the SDK event loop."""
+        """Compatibility entry used by the asynchronous public API."""
         return await self._run_async(self._get_service_rule(event_type, req))
 
     async def _get_service_rule(self, event_type: int, req: GetServiceRuleRequest) -> ServiceRuleResponse:
@@ -1061,6 +1157,13 @@ def _initialize_flow_engine(flow_engine, config, plugins, global_ctx):
     # 加载服务端连接器
     target_plugin = plugins.get_instance(PluginType.SERVER_CONNECTOR, protocol)
     flow_engine.svc_connector = target_plugin
+    if flow_engine.lossless_manager is not None:
+        flow_engine.lossless_manager._connector = target_plugin
+        lossless_config = config.get_provider().get_lossless()
+        admin_config = config.get_global().get_admin()
+        if lossless_config.enable and admin_config.port is not None and admin_config.port >= 0:
+            for method, path, handler in lossless_http_handlers(flow_engine.lossless_manager):
+                flow_engine.admin_server.add_route(method, path, handler)
     flow_engine.skill_connector = plugins.get_instance(PluginType.SKILL_CONNECTOR, "polaris")
     stat_chain = config.get_global().get_stat_reporter().get_chain()
     stat_reporter_name = stat_chain[0] if stat_chain else "prometheus"

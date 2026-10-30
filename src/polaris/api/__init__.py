@@ -22,12 +22,13 @@ from polaris.api.config import (
     init_context_by_file,
     init_context_by_stream,
 )
-from polaris.api.consumer import ConsumerAPI, create_consumer_by_config, create_consumer_by_file
+from polaris.api.consumer import ConsumerAPI, ServiceWatch, create_consumer_by_config, create_consumer_by_file
 from polaris.api.log import LogOptions
 from polaris.api.provider import ProviderAPI, create_provider_by_config, create_provider_by_file
 
 __all__ = [
     "ConsumerAPI",
+    "ServiceWatch",
     "LogOptions",
     "ProviderAPI",
     "SDKContext",

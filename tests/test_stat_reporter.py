@@ -270,7 +270,7 @@ def test_fixed_monitor_port_conflict_releases_failed_context(runtime, tmp_path):
     _, context, _ = runtime
     config = context.config
     config.get_global().get_admin().port = context.engine.stat_reporter.port
-    with pytest.raises(SDKError, match="Cannot bind metrics"):
+    with pytest.raises(SDKError, match="Cannot bind"):
         init_context_by_config(config)
     assert not context.is_destroy()
     context.engine.stat_reporter.report(call())

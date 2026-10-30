@@ -65,14 +65,20 @@ class PrometheusReporter(BaseStatReporter):
         self.values = {}
         self.task = None
         self.runner = None
+        self._admin_server = None
         self.session = None
         self.push_count = 0
-        self.port = None
+        self._port = None
         self.engine = None
         self.closed = False
         self.random = random.Random()
         self.push_lock = asyncio.Lock()
         self.pushing = False
+
+    @property
+    def port(self):
+        """Return the shared admin port when mounted, otherwise the private one."""
+        return self._admin_server.port if self._admin_server is not None else self._port
 
     def report(self, result):
         """Record Java label values and period count / delay aggregations."""
@@ -146,23 +152,30 @@ class PrometheusReporter(BaseStatReporter):
             if admin.port < 0:
                 self.enabled = False
                 return
-            app = web.Application()
-            app.router.add_get(self.config.path, self._metrics)
-            if self.config.path != "/-/healthy":
-                app.router.add_get("/-/healthy", self._metrics)
-            self.runner = web.AppRunner(app, access_log=None)
-            await self.runner.setup()
-            listen_port = (admin.port if admin.port is not None
-                           else stat_reporter_config.DEFAULT_ADMIN_PORT)
-            site = web.TCPSite(self.runner, admin.host, listen_port)
-            try:
-                await site.start()
-            except OSError as error:
-                await self.runner.cleanup()
-                self.runner = None
-                raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
-                               f"Cannot bind metrics listener {admin.host}:{admin.port}: {error}") from error
-            self.port = site._server.sockets[0].getsockname()[1]
+            shared = getattr(engine, "admin_server", None) if engine is not None else None
+            if shared is not None:
+                shared.add_route("GET", self.config.path, self._metrics)
+                if self.config.path != "/-/healthy":
+                    shared.add_route("GET", "/-/healthy", self._metrics)
+                self._admin_server = shared
+            else:
+                app = web.Application()
+                app.router.add_get(self.config.path, self._metrics)
+                if self.config.path != "/-/healthy":
+                    app.router.add_get("/-/healthy", self._metrics)
+                self.runner = web.AppRunner(app, access_log=None)
+                await self.runner.setup()
+                listen_port = (admin.port if admin.port is not None
+                               else stat_reporter_config.DEFAULT_ADMIN_PORT)
+                site = web.TCPSite(self.runner, admin.host, listen_port)
+                try:
+                    await site.start()
+                except OSError as error:
+                    await self.runner.cleanup()
+                    self.runner = None
+                    raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig,
+                                   f"Cannot bind metrics listener {admin.host}:{admin.port}: {error}") from error
+                self._port = site._server.sockets[0].getsockname()[1]
         else:
             self.session = ClientSession(timeout=ClientTimeout(total=self.global_config.get_api().timeout / 1000))
         self.task = asyncio.create_task(self._run(), name="polaris-prometheus")

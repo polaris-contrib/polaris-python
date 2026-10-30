@@ -66,6 +66,18 @@ class ProviderAPI:
         """Stop automatic heartbeats and synchronously deregister an instance."""
         return self.deregister(request)
 
+    def lossless_register(self, request: InstanceRegisterRequest) -> None:
+        """Delay or health-check gate registration for lossless online."""
+        self.check_available()
+        request.validate()
+        return self.context.get_engine().sync_lossless_register(request)
+
+    def lossless_deregister(self, request) -> None:
+        """Deregister immediately so consumers stop routing to the instance."""
+        self.check_available()
+        request.validate()
+        return self.context.get_engine().sync_lossless_deregister(request)
+
     async def async_register(self, request: InstanceRegisterRequest) -> InstanceRegisterResponse:
         """Asynchronously register with the request's automatic-heartbeat setting."""
         self.check_available()
@@ -94,6 +106,18 @@ class ProviderAPI:
     async def async_deregister_instance(self, request: InstanceDeRegisterRequest) -> None:
         """Stop automatic heartbeats and asynchronously deregister an instance."""
         return await self.async_deregister(request)
+
+    async def async_lossless_register(self, request: InstanceRegisterRequest) -> None:
+        """Asynchronously delay or health-check gate registration."""
+        self.check_available()
+        request.validate()
+        return await self.context.get_engine().async_lossless_register(request)
+
+    async def async_lossless_deregister(self, request) -> None:
+        """Asynchronously deregister immediately for lossless offline."""
+        self.check_available()
+        request.validate()
+        return await self.context.get_engine().async_lossless_deregister(request)
 
     def report_service_contract(self, request):
         """Synchronously report tools, resources, prompts and handler descriptors."""

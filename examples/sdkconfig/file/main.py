@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
 
 import argparse
 import json
@@ -131,6 +131,7 @@ def main() -> int:
             config = Configuration.from_file(str(path), apply_env=not args.no_env)
             source = str(path)
         config.set_default()
+        configure_e2e_event_reporting(config)
         config.get_consumer().get_local_cache().persist_dir = str(
             demo_backup_directory(__file__, component="file")
         )
