@@ -212,7 +212,6 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 | `chain` | `list[string]` | `[]` | 当前支持 `warmup`，按服务端无损规则对新实例做权重预热。 |
 
 ## ai.skill.serverConnector
-## ai.skill.serverConnector
 
 | 字段 | 类型 / 格式 | 默认值 | 说明 |
 | --- | --- | --- | --- |

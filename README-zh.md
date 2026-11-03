@@ -134,7 +134,7 @@ instance = consumer.get_one_instance(GetOneInstanceRequest(
 | 事件上报 | `pushgateway` |
 
 旧名称 `wr`、`err_count` 会规范化为 `weightedRandom`、`composite`。
-当前不拉取远端治理规则，也不启用主动健康探测。
+当前支持拉取远端无损规则；远端熔断、路由、限流和配置规则仍未启用，也不启用主动健康探测。
 
 ## 可观测性与安全
 

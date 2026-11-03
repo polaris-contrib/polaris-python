@@ -137,7 +137,8 @@ See [AI Registry APIs](docs/ai-registry.md) and:
 | Event reporter | `pushgateway` |
 
 Legacy names `wr` and `err_count` normalize to `weightedRandom` and `composite`.
-Remote governance rules and active health detection are not enabled.
+Remote lossless rules are supported. Remote circuit-breaking, routing, rate-limiting and
+configuration rules remain disabled, and active health detection is not enabled.
 
 ## Observability And Security
 
