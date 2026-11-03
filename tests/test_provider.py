@@ -178,6 +178,19 @@ def test_sync_automatic_registration_uses_default_ttl_and_headers(provider_runti
     assert len(engine.register_states._states) == 1
 
 
+def test_java_compatible_empty_service_token_is_sent_to_server(provider_runtime):
+    provider, engine, stub = provider_runtime
+    request = InstanceRegisterRequest("svc", "", "ns", "127.0.0.1", 8080, ttl=5)
+    assert provider.register_instance(request).instance_id == "instance-id"
+    assert provider.deregister(InstanceDeRegisterRequest(
+        "svc", "", "ns", "127.0.0.1", 8080, "instance-id"
+    )) is None
+    register, deregister = stub.calls[0][1], stub.calls[1][1]
+    assert register.service_token.value == ""
+    assert deregister.service_token.value == ""
+    assert engine.register_states._states == {}
+
+
 @pytest.mark.asyncio
 async def test_async_automatic_heartbeat_runs_after_ttl_and_stops_on_deregister(provider_runtime):
     provider, engine, stub = provider_runtime

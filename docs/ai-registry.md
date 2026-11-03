@@ -113,6 +113,12 @@ finally:
 均有 `async_` 形式。未找到资源 `400202` 作为结果返回，其他业务错误抛
 `SDKError`。SDK 不自动解压或执行下载内容。
 
+`SkillAPI` 支持 `destroy()`、`close()` 和 `with` 生命周期；`create_skill_by_context()`
+共享调用方 context，`create_skill_by_config()`、`create_skill_by_file()` 和
+`create_skill_by_default_config_file()` 创建并持有独立 context。为方便 Java 迁移，
+`SkillGetResponse.resource_version` 等价于 `version`，
+`SkillDownloadResponse.zip_content` 等价于 `data`。
+
 默认查询超时 5 秒，ZIP 下载超时 30 秒。请求自带 `timeout` 时优先。
 
 配置位于 `ai.skill.serverConnector`。完整字段见

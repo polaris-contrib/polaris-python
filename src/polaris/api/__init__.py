@@ -25,17 +25,29 @@ from polaris.api.config import (
 from polaris.api.consumer import ConsumerAPI, ServiceWatch, create_consumer_by_config, create_consumer_by_file
 from polaris.api.log import LogOptions
 from polaris.api.provider import ProviderAPI, create_provider_by_config, create_provider_by_file
+from polaris.api.skill import (
+    SkillAPI,
+    create_skill_by_config,
+    create_skill_by_context,
+    create_skill_by_default_config_file,
+    create_skill_by_file,
+)
 
 __all__ = [
     "ConsumerAPI",
     "ServiceWatch",
     "LogOptions",
     "ProviderAPI",
+    "SkillAPI",
     "SDKContext",
     "create_consumer_by_config",
     "create_consumer_by_file",
     "create_provider_by_config",
     "create_provider_by_file",
+    "create_skill_by_config",
+    "create_skill_by_context",
+    "create_skill_by_default_config_file",
+    "create_skill_by_file",
     "init_context_by_config",
     "init_context_by_file",
     "init_context",

@@ -24,7 +24,13 @@ from polaris.api.consumer import ConsumerAPI, ServiceWatch, create_consumer_by_c
 from polaris.api.log import LogOptions
 from polaris.api.lossless import LosslessAPI
 from polaris.api.provider import ProviderAPI, create_provider_by_config, create_provider_by_file
-from polaris.api.skill import SkillAPI, create_skill_by_config, create_skill_by_file
+from polaris.api.skill import (
+    SkillAPI,
+    create_skill_by_config,
+    create_skill_by_context,
+    create_skill_by_default_config_file,
+    create_skill_by_file,
+)
 from polaris.pkg.model.service import Instance
 from polaris.pkg.model.event import EventCenter, SDKEvent, SDKEventName, SDKEventType
 from polaris.pkg.model.lossless import InstanceProperties, LosslessActionProvider, LosslessInstance, RegisterStatus
@@ -51,6 +57,8 @@ __all__ = [
     "SkillAPI",
     "RegisterStatus",
     "create_skill_by_config",
+    "create_skill_by_context",
+    "create_skill_by_default_config_file",
     "create_skill_by_file",
     "SDKContext",
     "SDKError",
