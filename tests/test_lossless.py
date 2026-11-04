@@ -147,6 +147,44 @@ class ThreadBlockingActionProvider(FakeActionProvider):
             await asyncio.to_thread(self.release_deregister.wait)
 
 
+class SharedLifecycleState:
+    """Represent the one server-side instance written by replacement providers."""
+
+    def __init__(self):
+        self.online = False
+        self.weight = 0
+
+
+class ReplacementActionProvider(FakeActionProvider):
+    """Carry a request snapshot and optionally block its first lifecycle RPC."""
+
+    def __init__(self, state, weight, *, block_register=False, block_deregister=False):
+        super().__init__()
+        self.state = state
+        self.weight = weight
+        self.block_register = block_register
+        self.block_deregister = block_deregister
+        self.register_entered = threading.Event()
+        self.release_register = threading.Event()
+        self.deregister_entered = threading.Event()
+        self.release_deregister = threading.Event()
+
+    async def do_register(self, instance_properties: InstanceProperties):
+        self.register_count += 1
+        if self.block_register and self.register_count == 1:
+            self.register_entered.set()
+            await asyncio.to_thread(self.release_register.wait)
+        self.state.online = True
+        self.state.weight = self.weight
+
+    async def do_deregister(self):
+        self.deregister_count += 1
+        if self.block_deregister and self.deregister_count == 1:
+            self.deregister_entered.set()
+            await asyncio.to_thread(self.release_deregister.wait)
+        self.state.online = False
+
+
 def lossless_configuration(**kwargs):
     config = Configuration()
     config.set_default()
@@ -609,6 +647,71 @@ async def test_public_slow_stale_deregister_replays_latest_provider_state(monkey
         assert provider.server_weight == 2
         assert context.engine.lossless_manager.check_register_status() == RegisterStatus.REGISTERED
     finally:
+        context.destroy()
+
+
+@pytest.mark.asyncio
+async def test_provider_replacement_replays_latest_register_after_old_provider_returns(
+        monkeypatch, tmp_path):
+    context = make_context(
+        monkeypatch, tmp_path, RegisterStub(), admin_port=-1, enable=False,
+    )
+    api = LosslessAPI(context)
+    instance = lossless_instance()
+    state = SharedLifecycleState()
+    old = ReplacementActionProvider(state, 100, block_register=True)
+    new = ReplacementActionProvider(state, 700)
+    api.set_lossless_action_provider(instance, old)
+    try:
+        first = asyncio.create_task(api.async_lossless_register(instance))
+        await wait_for_thread_event(old.register_entered)
+        api.set_lossless_action_provider(instance, new)
+        await api.async_lossless_register(instance)
+
+        old.release_register.set()
+        await first
+
+        assert state.online
+        assert state.weight == 700
+        assert old.register_count == 1
+        assert new.register_count == 2
+        assert context.engine.lossless_manager.check_register_status() == RegisterStatus.REGISTERED
+    finally:
+        old.release_register.set()
+        context.destroy()
+
+
+@pytest.mark.asyncio
+async def test_provider_replacement_replays_latest_register_after_old_deregister_returns(
+        monkeypatch, tmp_path):
+    context = make_context(
+        monkeypatch, tmp_path, RegisterStub(), admin_port=-1, enable=False,
+    )
+    api = LosslessAPI(context)
+    instance = lossless_instance()
+    state = SharedLifecycleState()
+    old = ReplacementActionProvider(state, 100, block_deregister=True)
+    new = ReplacementActionProvider(state, 700)
+    api.set_lossless_action_provider(instance, old)
+    try:
+        await api.async_lossless_register(instance)
+        assert state.online and state.weight == 100
+
+        deregistering = asyncio.create_task(api.async_lossless_deregister(instance))
+        await wait_for_thread_event(old.deregister_entered)
+        api.set_lossless_action_provider(instance, new)
+        await api.async_lossless_register(instance)
+
+        old.release_deregister.set()
+        await deregistering
+
+        assert state.online
+        assert state.weight == 700
+        assert old.deregister_count == 1
+        assert new.register_count == 2
+        assert context.engine.lossless_manager.check_register_status() == RegisterStatus.REGISTERED
+    finally:
+        old.release_deregister.set()
         context.destroy()
 
 
