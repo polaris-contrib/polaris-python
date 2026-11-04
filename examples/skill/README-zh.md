@@ -10,15 +10,18 @@ SDK 不创建、不上传、不发布 Skill。
 
 ```bash
 ./examples/verify.sh --only skill
-POLARIS_SERVER_ADDRESS=<host>:8091 POLARIS_SERVICE_TOKEN=<service-token> \
-POLARIS_SKILL_SERVER_ADDRESS=<host>:8094 POLARIS_SKILL_NAME=<已发布名称> \
-POLARIS_SKILL_NAMESPACE=default \
+POLARIS_SERVER_ADDRESS=<host>:8091 \
 ./examples/verify_e2e.sh --only skill
 ```
 
 POLARIS_SKILL_TOKEN 优先于 POLARIS_TOKEN；POLARIS_SKILL_VERSION 可指定已发布版本，空值使用 active。
 这些 Skill 环境变量由示例显式读取，不是 SDK 的自动覆盖变量。
-统一 E2E 入口沿用 POLARIS_SERVICE_TOKEN 前置检查，Skill 只读 RPC 本身使用接入 Token。
+该场景不注册实例，无需 POLARIS_SERVICE_TOKEN；Skill 只读 RPC 使用
+POLARIS_SKILL_TOKEN，未设置时继承 POLARIS_TOKEN。
+Skill 地址默认取注册中心主机和 8094 端口；名称可省略，验证器会选择
+POLARIS_SKILL_NAMESPACE 内按名称排序的第一个资源。若没有资源，E2E 会通过商业版
+控制面创建并立即发布固定 fixture `polaris-python-e2e-skill-fixture`。该资源会保留，
+后续运行优先复用；SDK 本身仍为只读。
 
 ```bash
 POLARIS_E2E=1 make -C examples/skill run \

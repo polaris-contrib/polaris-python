@@ -32,10 +32,11 @@ from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote_plus
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener
 
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLES = REPO / "examples"
+E2E_SKILL_FIXTURE_NAME = "polaris-python-e2e-skill-fixture"
 
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 from examples._internal._runtime import (
@@ -45,10 +46,11 @@ from examples._internal._runtime import (
     resolve_e2e_namespace,
     verification_directory,
 )
-from polaris import Configuration, ConsumerAPI, SDKEventName, init_context_by_config
+from polaris import Configuration, ConsumerAPI, SDKEventName, SkillAPI, init_context_by_config
 from polaris.api.log import LogOptions
 from polaris.pkg.model.error import SDKError
 from polaris.pkg.model.service import GetInstancesRequest
+from polaris.pkg.model.skill import SkillListRequest
 
 
 def required_environment():
@@ -56,11 +58,11 @@ def required_environment():
     if not address:
         raise RuntimeError("POLARIS_SERVER_ADDRESS is required for real-service verification")
     address = address.split(",", 1)[0].strip()
-    service_token = os.getenv("POLARIS_E2E_SERVICE_TOKEN") or os.getenv("POLARIS_SERVICE_TOKEN")
-    if not service_token:
-        raise RuntimeError(
-            "POLARIS_SERVICE_TOKEN or POLARIS_E2E_SERVICE_TOKEN is required to register test instances"
-        )
+    service_token = (
+        os.getenv("POLARIS_E2E_SERVICE_TOKEN")
+        or os.getenv("POLARIS_SERVICE_TOKEN")
+        or ""
+    )
     return address, service_token
 
 
@@ -104,6 +106,119 @@ def assert_instance_host(actual, address):
     expected = get_local_host(address)
     if actual != expected:
         raise AssertionError(f"instance host {actual!r} does not match local route IP {expected!r}")
+
+
+def default_skill_address(address):
+    """Derive the conventional Skill service address from the registry address."""
+    host = address.rsplit(":", 1)[0].strip("[]")
+    return f"[{host}]:8094" if ":" in host else f"{host}:8094"
+
+
+def default_console_address(address):
+    """Derive the conventional Polaris console address."""
+    configured = os.getenv("POLARIS_CONSOLE_ADDRESS")
+    if configured:
+        return configured.rstrip("/")
+    host = address.rsplit(":", 1)[0].strip("[]")
+    return f"http://[{host}]:8090" if ":" in host else f"http://{host}:8090"
+
+
+def console_json_request(address, method, path, payload=None):
+    """Call a Polaris console JSON API and return its decoded response."""
+    token = (
+        os.getenv("POLARIS_CONSOLE_TOKEN")
+        or os.getenv("POLARIS_TOKEN")
+        or os.getenv("POLARIS_E2E_SERVICE_TOKEN")
+        or os.getenv("POLARIS_SERVICE_TOKEN")
+        or ""
+    )
+    headers = {"X-Polaris-Token": token}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = Request(
+        f"{default_console_address(address)}{path}",
+        data=data,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with build_opener(ProxyHandler({})).open(request, timeout=15) as response:
+            body = response.read()
+    except HTTPError as error:
+        body = error.read()
+        raise RuntimeError(
+            f"Polaris console {method} {path} returned HTTP {error.code}: "
+            f"{body.decode('utf-8', errors='replace')}"
+        ) from error
+    result = json.loads(body)
+    if result.get("code") != 200000:
+        raise RuntimeError(f"Polaris console {method} {path} failed: {result}")
+    return result
+
+
+def create_skill_fixture(address, namespace):
+    """Create and immediately publish the reusable E2E Skill fixture."""
+    name = E2E_SKILL_FIXTURE_NAME
+    description = "Reusable Skill fixture created by the Python E2E verifier"
+    content = (
+        "---\n"
+        f"name: {name}\n"
+        f"description: {description}\n"
+        "---\n\n"
+        "# Polaris Python E2E Skill\n\n"
+        "This reusable fixture verifies published Skill discovery and download.\n"
+    )
+    console_json_request(address, "POST", "/skill/v1/skills", {
+        "namespace": namespace,
+        "name": name,
+        "version": "1.0.0",
+        "description": description,
+        "content": content,
+        "scope": "PRIVATE",
+        "publish": True,
+    })
+    return name
+
+
+def discover_skill_name(
+        env, address, skill_address, namespace, *, expected_name="", timeout=0, fallback_to_first=True):
+    """Select a published Skill, optionally waiting for one specific resource."""
+    config = Configuration()
+    config.set_default()
+    config.get_global().get_admin().port = 0
+    config.get_global().get_server_connector().addresses = [address]
+    config.get_global().get_server_connector().token = os.getenv("POLARIS_TOKEN", "")
+    config.get_global().get_api().bind_ip = "127.0.0.1"
+    connector = config.get_ai().get_skill().get_server_connector()
+    connector.addresses = [skill_address]
+    connector.token = os.getenv("POLARIS_SKILL_TOKEN", os.getenv("POLARIS_TOKEN", ""))
+    connector.persist_enable = False
+    run = Path(env["POLARIS_DEMO_RUN_DIR"])
+    config.get_consumer().get_local_cache().persist_dir = str(run / "polaris" / "backup" / "skill-probe")
+    context = init_context_by_config(
+        config,
+        log_options=LogOptions(log_dir=run / "polaris" / "log" / "skill-probe"),
+    )
+    deadline = time.monotonic() + timeout
+    try:
+        api = SkillAPI(context)
+        while True:
+            response = api.list_skills(SkillListRequest(namespace=namespace, limit=100))
+            names = sorted({item.name for item in response.resources if item.name})
+            if expected_name:
+                if expected_name in names:
+                    return expected_name
+                if fallback_to_first and names:
+                    return names[0]
+            elif names:
+                return names[0]
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.5)
+    finally:
+        context.destroy()
 
 
 def cache_backup_glob(namespace, service):
@@ -678,14 +793,50 @@ def run_scenario(name, address, service_token, namespace, env):
             raise RuntimeError("MCP example exited during verification")
         return {"service": service, **result, "kept_running": True}
     if name == "skill":
-        skill_address = os.getenv("POLARIS_SKILL_SERVER_ADDRESS")
-        skill_name = os.getenv("POLARIS_SKILL_NAME")
-        if not skill_address or not skill_name:
-            raise RuntimeError("Skill verification requires POLARIS_SKILL_SERVER_ADDRESS and POLARIS_SKILL_NAME")
-        output = run_demo(EXAMPLES / "skill/main.py", ["--skill-server", skill_address, "--name", skill_name], env)
+        skill_address = os.getenv("POLARIS_SKILL_SERVER_ADDRESS") or default_skill_address(address)
+        configured_name = os.getenv("POLARIS_SKILL_NAME", "")
+        skill_namespace = os.getenv("POLARIS_SKILL_NAMESPACE")
+        if not skill_namespace:
+            skill_namespace = "default" if configured_name else namespace
+        skill_name = configured_name or discover_skill_name(
+            env,
+            address,
+            skill_address,
+            skill_namespace,
+            expected_name=E2E_SKILL_FIXTURE_NAME,
+        )
+        fixture_created = False
+        if not skill_name:
+            skill_name = create_skill_fixture(address, skill_namespace)
+            fixture_created = True
+            if not discover_skill_name(
+                env,
+                address,
+                skill_address,
+                skill_namespace,
+                expected_name=skill_name,
+                timeout=20,
+                fallback_to_first=False,
+            ):
+                raise RuntimeError(
+                    f"Skill fixture {skill_namespace}/{skill_name} was created "
+                    "but did not become readable through the Skill API"
+                )
+        output = run_demo(EXAMPLES / "skill/main.py", [
+            "--skill-server", skill_address,
+            "--namespace", skill_namespace,
+            "--name", skill_name,
+        ], env)
         if not any('"zip_size"' in line for line in output.splitlines()):
             raise AssertionError("Skill example did not finish its download")
-        return {"skill": skill_name, "effect": "queried and downloaded an existing published Skill"}
+        return {
+            "skill": skill_name,
+            "skill_namespace": skill_namespace,
+            "skill_address": skill_address,
+            "fixture_created": fixture_created,
+            "fixture_reused": not fixture_created,
+            "effect": "reused or created the Skill fixture and exercised published Skill download",
+        }
     if name == "monitoring":
         service = service_name(name)
         registry_host = address.rsplit(":", 1)[0].strip("[]")

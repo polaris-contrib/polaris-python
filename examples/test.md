@@ -94,19 +94,34 @@
 
 ```bash
 export POLARIS_SERVER_ADDRESS=<host>:8091
-export POLARIS_SERVICE_TOKEN=<service-token>
-export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
+export POLARIS_SERVICE_TOKEN=<service-token>   # 服务级鉴权时才需要
+export POLARIS_E2E_SERVICE_TOKEN=<e2e-token>   # 可选，优先于上一行
+export POLARIS_TOKEN=<sdk-token>               # 连接层鉴权时才需要
 ./examples/verify_e2e.sh
 ./examples/verify_e2e.sh --only quickstart,monitoring
 ```
 
-`POLARIS_E2E_SERVICE_TOKEN` 与 `POLARIS_SERVICE_TOKEN` 等价。脚本自己设置
-`POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES` 写成同一个地址。
+`POLARIS_SERVICE_TOKEN` 是注册、心跳和反注册请求携带的服务级令牌；服务未开启
+服务级鉴权时不需要设置，默认空字符串。`POLARIS_E2E_SERVICE_TOKEN` 是 E2E 脚手架
+使用的可选覆盖值，存在时优先于 `POLARIS_SERVICE_TOKEN`，便于测试凭据与实际服务
+凭据隔离。`POLARIS_TOKEN` 是连接注册中心的接入令牌，属于连接层鉴权，与前两者独立。
+三个令牌都未设置时分别使用空字符串。
+
+脚本自己设置 `POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES`
+写成同一个地址。
 测试实例和测试服务固定进入 `python-integration`；`POLARIS_E2E_NAMESPACE` 只能覆盖为
 其他隔离命名空间，不能设为共享的 `default`。监控推送把该主机端口改成 `9091`。
-Skill 资源命名空间与实例命名空间相互独立，另需
-`POLARIS_SKILL_SERVER_ADDRESS`（通常是同一主机的 `8094`）、`POLARIS_SKILL_NAME`
-以及可选的 `POLARIS_SKILL_NAMESPACE`（默认 `default`）。
+Skill 资源命名空间与实例命名空间相互独立。Skill 地址默认取注册中心主机与 `8094`
+端口，可用 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖；`POLARIS_SKILL_NAMESPACE` 默认
+`default`。`POLARIS_SKILL_NAME` 可省略，此时验证器通过只读 `GetSkillList`
+自动选择该命名空间内按名称排序的第一个已发布 Skill。若没有，则通过商业版
+Polaris 控制面的 `POST /skill/v1/skills` 创建并立即发布固定名称的
+`polaris-python-e2e-skill-fixture`。该资源会保留，后续 E2E 优先检查并复用。
+SDK 本身仍保持只读。
+控制面地址默认取同一主机的 `8090` 端口，可用 `POLARIS_CONSOLE_ADDRESS` 覆盖；
+管理请求令牌优先使用 `POLARIS_CONSOLE_TOKEN`，未设置时依次回退到
+`POLARIS_TOKEN` 和 service token。Skill fixture 不使用
+`cleanup.sh --delete-services` 清理。
 
 所有真实 E2E 场景创建的 Context 都会启用事件 Pushgateway，地址由
 `POLARIS_SERVER_ADDRESS` 的 host 加端口 `9091` 得到，上报路径为
@@ -133,7 +148,7 @@ Skill 资源命名空间与实例命名空间相互独立，另需
 | servicerouter | 同样 4 次选择，输出含 Provider 的 host 和 port。不检查 metadata 路由矩阵 |
 | multicontext | 两个 context 注册两个实例，clientId 不同，销毁第一个后第二个仍可见。进程保持运行 |
 | mcp | 注册普通 Instance，契约含 lookup、document、summarize，进程保持运行 |
-| skill | 只查询并下载已发布 Skill，输出含 `zip_size`。不上传、不发布 |
+| skill | 查询并下载已发布 Skill；名称未提供时发现或创建并保留固定 fixture，后续运行优先复用，输出含 `zip_size` |
 | a2a | 注册 card metadata，发现结果 `transport` 为 `JSONRPC`，进程退出前反注册 |
 | monitoring | 本机 echo 三次调用 200、503、200，指标推到 `<host>:9091`，`calls=3` 且 `pushes>=1`，然后反注册 |
 | events | 注册唯一 Provider，再使用真实注册中心发现并断言 `OnServiceAdded`；Provider 保持运行 |

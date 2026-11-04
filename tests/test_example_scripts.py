@@ -30,7 +30,14 @@ import psutil
 import pytest
 
 from examples._internal import _manage as manager, _runtime as runtime
-from examples._internal._real_verify import cache_backup_glob, e2e_namespace, service_name
+from examples._internal._real_verify import (
+    E2E_SKILL_FIXTURE_NAME,
+    cache_backup_glob,
+    default_skill_address,
+    e2e_namespace,
+    required_environment,
+    service_name,
+)
 from examples._internal._runtime import configure_e2e_event_reporting, get_local_host
 from polaris import Configuration
 
@@ -59,6 +66,25 @@ def test_real_verification_registers_into_python_integration(monkeypatch):
         e2e_namespace()
     with pytest.raises(ValueError, match="must not be default"):
         manager.e2e_namespace()
+
+
+def test_real_verification_service_token_is_optional(monkeypatch):
+    monkeypatch.setenv("POLARIS_SERVER_ADDRESS", "1.14.219.4:8091")
+    monkeypatch.delenv("POLARIS_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("POLARIS_E2E_SERVICE_TOKEN", raising=False)
+    assert required_environment() == ("1.14.219.4:8091", "")
+
+    monkeypatch.setenv("POLARIS_SERVICE_TOKEN", "service-token")
+    assert required_environment() == ("1.14.219.4:8091", "service-token")
+
+    monkeypatch.setenv("POLARIS_E2E_SERVICE_TOKEN", "e2e-token")
+    assert required_environment() == ("1.14.219.4:8091", "e2e-token")
+
+
+def test_skill_address_is_derived_from_registry_host():
+    assert default_skill_address("1.14.219.4:8091") == "1.14.219.4:8094"
+    assert default_skill_address("[2001:db8::1]:8091") == "[2001:db8::1]:8094"
+    assert E2E_SKILL_FIXTURE_NAME == "polaris-python-e2e-skill-fixture"
 
 
 def test_real_verification_event_reporter_uses_pushgateway(monkeypatch):
@@ -344,6 +370,8 @@ def test_cleanup_delete_services_targets_only_e2e_services(monkeypatch):
     assert manager.delete_test_services(address, namespace, names) == names
     assert calls[1].full_url == f"{address}/naming/v1/services/delete"
     assert calls[1].method == "POST"
+
+
     assert calls[1].headers["Content-type"] == "application/json"
     assert calls[1].headers["X-polaris-token"] == "service-token"
     assert json.loads(calls[1].data) == [

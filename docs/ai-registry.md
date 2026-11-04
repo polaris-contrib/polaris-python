@@ -113,6 +113,11 @@ finally:
 均有 `async_` 形式。未找到资源 `400202` 作为结果返回，其他业务错误抛
 `SDKError`。SDK 不自动解压或执行下载内容。
 
+Skill 协议只提供 `GetSkill`、`GetSkillList` 和 `DownloadSkill`，SDK 不创建、发布、
+覆盖或删除 Skill。E2E 在未指定名称时可以自动发现已发布资源；命名空间为空时会通过
+商业版控制面 `POST /skill/v1/skills` 创建并发布固定夹具
+`polaris-python-e2e-skill-fixture`。该夹具会保留，后续 E2E 优先检查并复用。
+
 `SkillAPI` 支持 `destroy()`、`close()` 和 `with` 生命周期；`create_skill_by_context()`
 共享调用方 context，`create_skill_by_config()`、`create_skill_by_file()` 和
 `create_skill_by_default_config_file()` 创建并持有独立 context。为方便 Java 迁移，

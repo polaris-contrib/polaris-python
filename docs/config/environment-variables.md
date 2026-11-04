@@ -97,6 +97,21 @@ Skill 配置位于 `ai.skill.serverConnector`，没有专用环境覆盖变量�
 - 显式 Skill token 优先。
 - Skill TLS、地址和持久化配置独立于普通注册发现。
 
+## 示例 E2E 令牌
+
+以下变量由 `examples/verify_e2e.sh` 使用：
+
+| 变量 | 作用 | 是否必填 |
+| --- | --- | --- |
+| `POLARIS_TOKEN` | SDK 连接注册中心的接入令牌 | 否 |
+| `POLARIS_SERVICE_TOKEN` | 注册、心跳和反注册请求携带的服务级令牌 | 否 |
+| `POLARIS_E2E_SERVICE_TOKEN` | E2E 专用的服务级令牌覆盖值，优先于 `POLARIS_SERVICE_TOKEN` | 否 |
+| `POLARIS_CONSOLE_ADDRESS` | E2E 控制面地址，默认取注册中心主机的 8090 端口 | 否 |
+| `POLARIS_CONSOLE_TOKEN` | E2E 控制面管理令牌；未设置时回退到其他令牌 | 否 |
+
+未设置时三个值均为空字符串。注册中心和服务都没有开启鉴权时，不需要设置其中任何
+变量。`POLARIS_E2E_SERVICE_TOKEN` 不是 SDK 变量，只用于隔离测试注册和清理凭据。
+
 ## 日志环境变量
 
 日志不属于 `polaris.yaml`。每个 context 创建时分别采用：
