@@ -29,6 +29,7 @@ from polarismesh_specification.api.v1.traffic_manage import lossless_pb2
 from polaris import (
     Configuration,
     ConsumerAPI,
+    LosslessAPI,
     LosslessInstance,
     ProviderAPI,
     RegisterStatus,
@@ -95,6 +96,8 @@ class BlockingActionProvider(FakeActionProvider):
 
     def __init__(self):
         super().__init__()
+        self.server_online = False
+        self.server_weight = 0
         self.register_entered = asyncio.Event()
         self.release_register = asyncio.Event()
         self.deregister_entered = asyncio.Event()
@@ -102,15 +105,46 @@ class BlockingActionProvider(FakeActionProvider):
 
     async def do_register(self, instance_properties: InstanceProperties):
         self.register_count += 1
+        self.server_online = True
+        self.server_weight = 1 if self.register_count == 1 else 2
         if self.register_count == 1:
             self.register_entered.set()
             await self.release_register.wait()
 
     async def do_deregister(self):
         self.deregister_count += 1
+        self.server_online = False
         if self.deregister_count == 1:
             self.deregister_entered.set()
             await self.release_deregister.wait()
+
+
+class ThreadBlockingActionProvider(FakeActionProvider):
+    """Block public API RPCs off the SDK loop while recording provider state."""
+
+    def __init__(self):
+        super().__init__()
+        self.server_online = False
+        self.server_weight = 0
+        self.register_entered = threading.Event()
+        self.release_register = threading.Event()
+        self.deregister_entered = threading.Event()
+        self.release_deregister = threading.Event()
+
+    async def do_register(self, instance_properties: InstanceProperties):
+        self.register_count += 1
+        self.server_online = True
+        self.server_weight = 1 if self.register_count == 1 else 2
+        if self.register_count == 1:
+            self.register_entered.set()
+            await asyncio.to_thread(self.release_register.wait)
+
+    async def do_deregister(self):
+        self.deregister_count += 1
+        self.server_online = False
+        if self.deregister_count == 1:
+            self.deregister_entered.set()
+            await asyncio.to_thread(self.release_deregister.wait)
 
 
 def lossless_configuration(**kwargs):
@@ -245,8 +279,10 @@ async def test_slow_stale_register_does_not_deregister_newer_register():
 
     provider.release_register.set()
     await first
-    assert provider.register_count == 2
+    assert provider.register_count == 3
     assert provider.deregister_count == 1
+    assert provider.server_online
+    assert provider.server_weight == 2
     assert manager.check_register_status() == RegisterStatus.REGISTERED
 
 
@@ -268,8 +304,10 @@ async def test_slow_stale_deregister_does_not_override_newer_register():
 
     provider.release_deregister.set()
     await deregistering
-    assert provider.register_count == 2
+    assert provider.register_count == 3
     assert provider.deregister_count == 1
+    assert provider.server_online
+    assert provider.server_weight == 2
     assert manager.check_register_status() == RegisterStatus.REGISTERED
 
 
@@ -507,6 +545,71 @@ def make_context(monkeypatch, tmp_path, stub, *, provider=True, consumer=False,
     config.set_default()
     config.get_consumer().get_local_cache().persist_dir = str(tmp_path)
     return init_context_by_config(config)
+
+
+async def wait_for_thread_event(event: threading.Event, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not event.is_set():
+        if time.monotonic() >= deadline:
+            raise AssertionError("thread event was not set before timeout")
+        await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_public_slow_stale_register_replays_latest_provider_state(monkeypatch, tmp_path):
+    context = make_context(
+        monkeypatch, tmp_path, RegisterStub(), admin_port=-1, enable=False,
+    )
+    api = LosslessAPI(context)
+    provider = ThreadBlockingActionProvider()
+    instance = lossless_instance()
+    api.set_lossless_action_provider(instance, provider)
+    try:
+        first = asyncio.create_task(api.async_lossless_register(instance))
+        await wait_for_thread_event(provider.register_entered)
+        deregistering = asyncio.create_task(api.async_lossless_deregister(instance))
+        await wait_for_thread_event(provider.deregister_entered)
+        provider.release_deregister.set()
+        await deregistering
+
+        await api.async_lossless_register(instance)
+        assert context.engine.lossless_manager.check_register_status() == RegisterStatus.REGISTERED
+        provider.release_register.set()
+        await first
+
+        assert provider.server_online
+        assert provider.server_weight == 2
+        assert context.engine.lossless_manager.check_register_status() == RegisterStatus.REGISTERED
+    finally:
+        context.destroy()
+
+
+@pytest.mark.asyncio
+async def test_public_slow_stale_deregister_replays_latest_provider_state(monkeypatch, tmp_path):
+    context = make_context(
+        monkeypatch, tmp_path, RegisterStub(), admin_port=-1, enable=False,
+    )
+    api = LosslessAPI(context)
+    provider = ThreadBlockingActionProvider()
+    instance = lossless_instance()
+    api.set_lossless_action_provider(instance, provider)
+    try:
+        initial = asyncio.create_task(api.async_lossless_register(instance))
+        await wait_for_thread_event(provider.register_entered)
+        provider.release_register.set()
+        await initial
+
+        deregistering = asyncio.create_task(api.async_lossless_deregister(instance))
+        await wait_for_thread_event(provider.deregister_entered)
+        await api.async_lossless_register(instance)
+        provider.release_deregister.set()
+        await deregistering
+
+        assert provider.server_online
+        assert provider.server_weight == 2
+        assert context.engine.lossless_manager.check_register_status() == RegisterStatus.REGISTERED
+    finally:
+        context.destroy()
 
 
 @pytest.mark.asyncio

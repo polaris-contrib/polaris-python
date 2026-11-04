@@ -352,23 +352,14 @@ class LosslessManager:
         provider = self._action_providers.get(instance)
         if provider is None:
             return
-        properties = InstanceProperties()
-        await provider.do_register(properties)
-        if generation is not None and not self._is_current_register(instance, generation):
-            if self._closed or self._desired_statuses.get(instance) == RegisterStatus.UNREGISTERED:
-                lossless_logger.warning("lossless offline superseded registration for %s", instance)
-                await provider.do_deregister()
-                if self._closed or self._desired_statuses.get(instance) == RegisterStatus.UNREGISTERED:
-                    self._register_statuses[instance] = RegisterStatus.UNREGISTERED
-            else:
-                lossless_logger.info("lossless registration for %s was superseded by a newer register", instance)
-            return
-        self._register_statuses[instance] = RegisterStatus.REGISTERED
-        self._register_timestamps[instance] = time.time()
+        if generation is None:
+            self._next_register_generation(instance)
+            self._desired_statuses[instance] = RegisterStatus.REGISTERED
+        await self._reconcile_instance(instance, provider)
 
     async def lossless_deregister(self, instance: LosslessInstance) -> None:
         """Deregister immediately so consumers can remove the instance."""
-        generation = self._next_register_generation(instance)
+        self._next_register_generation(instance)
         provider = self._action_providers.get(instance)
         if provider is None:
             lossless_logger.warning("no lossless action provider for %s, skip lossless deregister", instance)
@@ -378,9 +369,38 @@ class LosslessManager:
         if task is not None and not task.done():
             task.cancel()
         self._register_statuses[instance] = RegisterStatus.UNREGISTERED
-        await provider.do_deregister()
-        if self._register_generations.get(instance) == generation:
-            self._register_statuses[instance] = RegisterStatus.UNREGISTERED
+        await self._reconcile_instance(instance, provider)
+
+    async def _reconcile_instance(
+            self, instance: LosslessInstance, provider: LosslessActionProvider) -> None:
+        """Apply the latest intent after an RPC, replaying when an older RPC raced it."""
+        properties = InstanceProperties()
+        while not self._closed:
+            generation = self._register_generations.get(instance)
+            desired = self._desired_statuses.get(instance)
+            if generation is None or desired is None:
+                return
+
+            if desired == RegisterStatus.REGISTERED:
+                await provider.do_register(properties)
+            else:
+                await provider.do_deregister()
+
+            if self._closed:
+                return
+            if (self._register_generations.get(instance) == generation
+                    and self._desired_statuses.get(instance) == desired):
+                if desired == RegisterStatus.REGISTERED:
+                    self._register_statuses[instance] = RegisterStatus.REGISTERED
+                    self._register_timestamps[instance] = time.time()
+                else:
+                    self._register_statuses[instance] = RegisterStatus.UNREGISTERED
+                return
+
+            # A newer lifecycle intent arrived while this RPC was in flight. The
+            # completed RPC may have changed the provider after that intent, so
+            # replay the current intent instead of trusting the stale result.
+            lossless_logger.info("replaying latest lossless intent for %s", instance)
 
     def check_register_status(self) -> RegisterStatus:
         """Return REGISTERED only when every tracked instance is registered."""
