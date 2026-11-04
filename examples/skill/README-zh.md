@@ -19,9 +19,11 @@ POLARIS_SKILL_TOKEN 优先于 POLARIS_TOKEN；POLARIS_SKILL_VERSION 可指定已
 该场景不注册实例，无需 POLARIS_SERVICE_TOKEN；Skill 只读 RPC 使用
 POLARIS_SKILL_TOKEN，未设置时继承 POLARIS_TOKEN。
 Skill 地址默认取注册中心主机和 8094 端口；名称可省略，验证器会选择
-POLARIS_SKILL_NAMESPACE 内按名称排序的第一个资源。若没有资源，E2E 会通过商业版
-控制面创建并立即发布固定 fixture `polaris-python-e2e-skill-fixture`。该资源会保留，
-后续运行优先复用；SDK 本身仍为只读。
+POLARIS_SKILL_NAMESPACE 内按名称排序的第一个资源。E2E 验证器中，未配置命名空间时，
+自动发现和 fixture 默认使用隔离的实例 E2E 命名空间；指定 POLARIS_SKILL_NAME 时
+默认使用 `default`。若没有资源，E2E 会通过商业版控制面创建并立即发布固定 fixture
+`polaris-python-e2e-skill-fixture`。该资源会保留，后续运行优先复用；SDK 本身仍为
+只读。
 
 ```bash
 POLARIS_E2E=1 make -C examples/skill run \

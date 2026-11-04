@@ -66,6 +66,13 @@ def required_environment():
     return address, service_token
 
 
+def resolve_skill_namespace(instance_namespace, *, configured_name="", configured_namespace=""):
+    """Keep automatic Skill discovery and fixtures in the isolated E2E namespace."""
+    if configured_namespace:
+        return configured_namespace
+    return "default" if configured_name else instance_namespace
+
+
 def scenario_environment(address):
     env = os.environ.copy()
     registry_host = address.rsplit(":", 1)[0].strip("[]")
@@ -795,9 +802,11 @@ def run_scenario(name, address, service_token, namespace, env):
     if name == "skill":
         skill_address = os.getenv("POLARIS_SKILL_SERVER_ADDRESS") or default_skill_address(address)
         configured_name = os.getenv("POLARIS_SKILL_NAME", "")
-        skill_namespace = os.getenv("POLARIS_SKILL_NAMESPACE")
-        if not skill_namespace:
-            skill_namespace = "default" if configured_name else namespace
+        skill_namespace = resolve_skill_namespace(
+            namespace,
+            configured_name=configured_name,
+            configured_namespace=os.getenv("POLARIS_SKILL_NAMESPACE", ""),
+        )
         skill_name = configured_name or discover_skill_name(
             env,
             address,

@@ -112,9 +112,11 @@ export POLARIS_TOKEN=<sdk-token>               # 连接层鉴权时才需要
 测试实例和测试服务固定进入 `python-integration`；`POLARIS_E2E_NAMESPACE` 只能覆盖为
 其他隔离命名空间，不能设为共享的 `default`。监控推送把该主机端口改成 `9091`。
 Skill 资源命名空间与实例命名空间相互独立。Skill 地址默认取注册中心主机与 `8094`
-端口，可用 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖；`POLARIS_SKILL_NAMESPACE` 默认
-`default`。`POLARIS_SKILL_NAME` 可省略，此时验证器通过只读 `GetSkillList`
-自动选择该命名空间内按名称排序的第一个已发布 Skill。若没有，则通过商业版
+端口，可用 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖。未配置
+`POLARIS_SKILL_NAMESPACE` 时：指定了 `POLARIS_SKILL_NAME` 则默认 `default`；
+未指定名称则自动发现和 fixture 使用隔离的实例 E2E 命名空间。`POLARIS_SKILL_NAME`
+可省略，此时验证器通过只读 `GetSkillList` 自动选择该命名空间内按名称排序的第一个
+已发布 Skill。若没有，则通过商业版
 Polaris 控制面的 `POST /skill/v1/skills` 创建并立即发布固定名称的
 `polaris-python-e2e-skill-fixture`。该资源会保留，后续 E2E 优先检查并复用。
 SDK 本身仍保持只读。

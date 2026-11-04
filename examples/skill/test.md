@@ -59,8 +59,10 @@ export POLARIS_SERVER_ADDRESS=<host>:8091
 
 Skill 地址默认由 `POLARIS_SERVER_ADDRESS` 的主机和端口 `8094` 组成，可用
 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖。`POLARIS_SKILL_NAME` 可省略，此时先调用只读
-`GetSkillList`，在 `POLARIS_SKILL_NAMESPACE`（默认 `default`）中选择按名称排序的
-第一个已发布 Skill。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，
+`GetSkillList`，在 `POLARIS_SKILL_NAMESPACE` 中选择按名称排序的第一个已发布 Skill。
+未配置命名空间时：指定了 `POLARIS_SKILL_NAME` 则使用 `default`；未指定名称则沿用
+隔离的实例 E2E 命名空间（默认 `python-integration`），确保自动发现和 fixture 不进入
+共享命名空间。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，
 Skill 连接使用 `POLARIS_TOKEN`。`POLARIS_SERVICE_TOKEN` 与该只读场景无关。
 
 SDK 的 Skill gRPC 只提供 `GetSkill`、`GetSkillList` 和 `DownloadSkill`。当隔离
@@ -71,8 +73,9 @@ fixture 保留下来，后续运行优先检查并复用，不自动删除。
 
 实例 E2E 命名空间固定为 `python-integration`，不得把
 `POLARIS_E2E_NAMESPACE` 设为 `default`。Skill 资源使用独立的
-`POLARIS_SKILL_NAMESPACE`，默认 `default`，不要为了让测试读到 Skill 而把测试服务
-放进共享命名空间。
+`POLARIS_SKILL_NAMESPACE`；未显式配置时，自动发现和 fixture 使用隔离的实例 E2E
+命名空间，只有指定了 `POLARIS_SKILL_NAME` 的只读场景才默认使用 `default`。不要把
+测试服务放进共享命名空间。
 
 步骤：
 

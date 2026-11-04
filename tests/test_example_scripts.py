@@ -36,6 +36,7 @@ from examples._internal._real_verify import (
     default_skill_address,
     e2e_namespace,
     required_environment,
+    resolve_skill_namespace,
     service_name,
 )
 from examples._internal._runtime import configure_e2e_event_reporting, get_local_host
@@ -85,6 +86,17 @@ def test_skill_address_is_derived_from_registry_host():
     assert default_skill_address("1.14.219.4:8091") == "1.14.219.4:8094"
     assert default_skill_address("[2001:db8::1]:8091") == "[2001:db8::1]:8094"
     assert E2E_SKILL_FIXTURE_NAME == "polaris-python-e2e-skill-fixture"
+
+
+def test_skill_namespace_defaults_to_isolated_namespace_for_auto_discovery():
+    assert resolve_skill_namespace("python-integration") == "python-integration"
+    assert resolve_skill_namespace("python-integration", configured_name="published") == "default"
+    assert resolve_skill_namespace(
+        "python-integration", configured_name="published", configured_namespace="custom",
+    ) == "custom"
+    assert resolve_skill_namespace(
+        "python-integration", configured_namespace="custom",
+    ) == "custom"
 
 
 def test_real_verification_event_reporter_uses_pushgateway(monkeypatch):
