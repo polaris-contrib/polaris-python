@@ -115,7 +115,7 @@ async def load_file_cache(engine, request):
             or response.service.namespace.value != request.namespace):
         logger.warning("ignore invalid file cache for %s/%s type %s", request.namespace, request.name, request.type)
         return None
-    logger.warning("use file cache %s", request.name)
+    logger.debug("use file cache namespace=%s service=%s", request.namespace, request.name)
     return response
 
 
@@ -286,6 +286,12 @@ class LocalCache(BaseLocalRegistry):
         cache_obj.set_value(new_value)
         cache_obj.remote_updated = True
         self.services[service_key] = True
+        log_loaded = logger.info if old_value is None else logger.debug
+        log_loaded(
+            "cache snapshot loaded namespace=%s service=%s revision=%s instances=%d",
+            service_key.namespace, service_key.service,
+            new_value.revision, len(new_value.instances),
+        )
         self._publish_resource_event(
             SDKEventName.ON_SERVICE_ADDED if old_value is None else SDKEventName.ON_SERVICE_UPDATED,
             service_key, old_value, new_value,

@@ -303,13 +303,13 @@ class Engine(BaseEngine):
                     loop.run_until_complete(self.admin_server.start())
                 for event_reporter in self.event_reporters:
                     loop.run_until_complete(event_reporter.start(self))
-                logger.warning("start timing update job")
+                logger.info("start timing update job")
                 loop.create_task(self.timing_update_server_task())
                 loop.create_task(self.timing_expire_cache_task())
                 if self.circuit_breaker_chain:
-                    logger.warning("start circuit break job")
+                    logger.info("start circuit break job")
                     loop.create_task(self.timing_check_circuit_break_task())
-                logger.warning("start job of client reporting")
+                logger.info("start job of client reporting")
                 loop.create_task(self.add_client_report_task())
                 if hasattr(self.svc_connector, "start_address_switching"):
                     self.svc_connector.start_address_switching()
@@ -580,6 +580,11 @@ class Engine(BaseEngine):
                     candidates = [node for node in candidates if node is not selected]
                 route_logger.warning("all instances unavailable; returning %s:%d without half-open permit",
                                      result.get_host(), result.get_port())
+        if result is not None:
+            route_logger.debug(
+                "load balancer selected %s:%d namespace=%s service=%s",
+                result.get_host(), result.get_port(), req.namespace, req.service,
+            )
         return result
 
     def _warmup_enabled(self) -> bool:
@@ -609,11 +614,21 @@ class Engine(BaseEngine):
             if (healthy_only or getattr(req, "skip_route_filter", False)) and item in self.router_chain:
                 continue
             if not item.enable(routeInfo, service_instances):
+                route_logger.debug(
+                    "router %s skipped namespace=%s service=%s",
+                    type(item).__name__, req.namespace, req.service,
+                )
                 continue
+            before = len(service_instances.instances)
             filter_result = item.get_filtered_instances(route_info=routeInfo, instances=service_instances)
             if filter_result is None:
                 return None
             service_instances.instances = filter_result.instances
+            route_logger.debug(
+                "router %s namespace=%s service=%s instances=%d->%d",
+                type(item).__name__, req.namespace, req.service,
+                before, len(service_instances.instances),
+            )
             if not service_instances.instances:
                 break
         return service_instances
@@ -1033,9 +1048,9 @@ class Engine(BaseEngine):
                     task.last_update_time = int(time.time() * 1000)
                     break
                 self._prune_circuit_breaker_timers(task.service_key, service_ins)
-                cache_logger.warning("get instance update %s %s %s", task.service_key.__dict__,
-                               len(service_ins.instances),
-                               service_ins.filtered_instances.__dict__)
+                cache_logger.debug("get instance update %s %s %s", task.service_key.__dict__,
+                                   len(service_ins.instances),
+                                   service_ins.filtered_instances.__dict__)
 
                 # for k, v in self.registry.service_map.items():
                 #     print(k.service, v.value.instances)
@@ -1056,13 +1071,17 @@ class Engine(BaseEngine):
                 if err.err_code == ErrorCode.ErrCodeDataNotChange:
                     task.cache_obj.remote_updated = True
                     task.last_update_time = int(time.time() * 1000)
-                    cache_logger.info("Data not change for updating %s", task.service_key.__dict__)
+                    cache_logger.debug("Data not change for updating %s", task.service_key.__dict__)
                     break
                 cache_logger.error("Failed to discover %s in periodic updating task because %s", task.service_key.__dict__,
                              repr(err))
                 continue
             else:
-                cache_logger.warning("success to update %s", task.service_key.__dict__)
+                cache_logger.info(
+                    "cache snapshot updated namespace=%s service=%s revision=%s instances=%d",
+                    task.service_key.namespace, task.service_key.service,
+                    service_ins.revision, len(service_ins.instances),
+                )
                 break
         return
 
@@ -1139,6 +1158,8 @@ def create_flow_engine(config: Configuration, plugins: PluginManager, global_ctx
     if global_ctx is None:
         global_ctx = ValueContext()
 
+    logger.info("polaris engine initializing clientId=%s version=%s",
+                global_ctx.get_client_id(), version)
     setup(InitContext(value_ctx=global_ctx, config=config, plugins=plugins))
 
     flow_engine = Engine(config=config, default_api_timeout=config.get_global().get_api().get_timeout(),
@@ -1193,13 +1214,20 @@ def _initialize_flow_engine(flow_engine, config, plugins, global_ctx):
 
     # 加载 Java 对齐的 before / core / after 三段服务路由链
     router_config = config.get_consumer().get_service_router()
+    router_names = {}
     for config_field, engine_field in (
             ("before_chain", "before_router_chain"),
             ("chain", "router_chain"),
             ("after_chain", "after_router_chain")):
+        names = list(getattr(router_config, "get_%s" % config_field)() or ())
         routers = [plugins.get_instance(PluginType.SERVICE_ROUTER, router_name)
-                   for router_name in getattr(router_config, "get_%s" % config_field)()]
+                   for router_name in names]
         setattr(flow_engine, engine_field, routers)
+        router_names[config_field] = names
+    route_logger.info(
+        "router chains initialized before=%s core=%s after=%s",
+        router_names["before_chain"], router_names["chain"], router_names["after_chain"],
+    )
 
     # 加载负载均衡插件
     load_balance_type = config.get_consumer().get_load_balancer().get_type()
@@ -1224,8 +1252,26 @@ def _initialize_flow_engine(flow_engine, config, plugins, global_ctx):
                 target_plugin = plugins.get_instance(PluginType.CIRCUIT_BREAKER, cb_name)
                 # print("polaris CIRCUIT_BREAKER plugin", target_plugin)
                 flow_engine.circuit_breaker_chain[cb_name] = target_plugin
+    circuitbreaker_logger.info(
+        "circuit breaker chain initialized enabled=%s plugins=%s",
+        enable_cb, list(flow_engine.circuit_breaker_chain),
+    )
 
     global_ctx.set_value(ContextKeyEngine, flow_engine)
+    logger.info(
+        "polaris engine initialized clientId=%s version=%s protocol=%s addresses=%s "
+        "localCache=%s loadBalancer=%s routers=%s circuitBreakers=%s lossless=%s "
+        "eventReporters=%s statReporter=%s admin=%s:%s reportInterval=%dms",
+        global_ctx.get_client_id(), version, protocol,
+        list(config.get_global().get_server_connector().get_addresses()),
+        local_cache_type, load_balance_type, router_names,
+        list(flow_engine.circuit_breaker_chain),
+        flow_engine.lossless_manager.enabled,
+        [type(reporter).__name__ for reporter in flow_engine.event_reporters],
+        type(flow_engine.stat_reporter).__name__ if flow_engine.stat_reporter is not None else None,
+        config.get_global().get_admin().host, config.get_global().get_admin().port,
+        flow_engine.check_periods.client_report,
+    )
     logger.info("success to start polaris engine")
     flow_engine.start_job_thread()
     return flow_engine

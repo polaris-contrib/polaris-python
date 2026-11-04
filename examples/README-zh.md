@@ -67,7 +67,8 @@ cleanup.sh   停止已记录进程并清理本地产物
 - `console.log`
 - `verification.log`
 - `result.json`
-- `sdk/` 下的分类日志
+- `polaris/log/<组件>/<分类>/` 下的 SDK 分类日志
+- `polaris/backup/<组件>/` 下的本地缓存备份
 - `work/` 或 `.runtime/` 下的运行数据
 
 查看和清理：

@@ -48,6 +48,11 @@ DISCOVER_TYPE_FILE_NAMES = {
 logger = get_logger("cache")
 
 
+def _resource_type(service) -> object:
+    """Return a discover type or the key class used by Skill persistence."""
+    return getattr(service, "type", type(service).__name__)
+
+
 class BackupTaskMsg:
     def __init__(self, service: InstanceDiscoverRequest, data: response_pb2.DiscoverResponse | None,
                  completion: Future | None = None):
@@ -77,6 +82,10 @@ class LocalFileCache:
             os.path.expanduser(base_dir or DefaultConf.DefaultCachePersistDir)
         )
         os.makedirs(self.base_dir, exist_ok=True)
+        self.logger.info(
+            "cache backup initialized dir=%s writeRetry=%d readRetry=%d retryInterval=%.3fs",
+            self.base_dir, self.max_write_retry, self.max_read_retry, self.retry_interval,
+        )
         lock_file_path = os.path.join(self.base_dir, LOCK_FILE)
         self.lock_file = open(lock_file_path, 'a+')
         self.thread_lock = Lock()
@@ -106,7 +115,7 @@ class LocalFileCache:
         return True
 
     def thread_loop(self):
-        self.logger.warning("start backup threading")
+        self.logger.info("cache backup writer started")
         while True:
             msg: BackupTaskMsg = self.queue.get()
             try:
@@ -183,6 +192,7 @@ class LocalFileCache:
             self._read_executor.shutdown(wait=True, cancel_futures=True)
             with self.thread_lock:
                 self.lock_file.close()
+            self.logger.info("cache backup writer stopped dir=%s", self.base_dir)
 
     def save(self, service: InstanceDiscoverRequest, data: response_pb2.DiscoverResponse):
         """Queue a private snapshot while this context's backup writer is open."""
@@ -192,6 +202,10 @@ class LocalFileCache:
             snapshot = self._copy_response(data)
             request = self._copy_request(service)
             self.queue.put(BackupTaskMsg(request, snapshot))
+            self.logger.debug(
+                "cache backup queued namespace=%s resource=%s type=%s",
+                service.namespace, service.name, _resource_type(service),
+            )
 
     def _copy_request(self, service):
         return InstanceDiscoverRequest(service.type, service.name, service.namespace)
@@ -221,6 +235,8 @@ class LocalFileCache:
                 os.remove(self.get_cache_file_path(service))
             except FileNotFoundError:
                 pass
+            else:
+                self.logger.info("cache backup deleted namespace=%s resource=%s", service.namespace, service.name)
         finally:
             self._unlock()
 
@@ -244,7 +260,10 @@ class LocalFileCache:
                 os.fsync(data_file.fileno())
             os.replace(temporary_path, file_path)
             temporary_path = None
-            self.logger.warning("success to back up data for %s", service.name)
+            self.logger.info(
+                "cache backup written namespace=%s resource=%s type=%s file=%s",
+                service.namespace, service.name, _resource_type(service), file_path,
+            )
         finally:
             try:
                 if temporary_path is not None:
@@ -257,7 +276,13 @@ class LocalFileCache:
         if self._closed:
             return None
         try:
-            return self._retry(lambda: self._read(service, expire), self.max_read_retry, reading=True)
+            result = self._retry(lambda: self._read(service, expire), self.max_read_retry, reading=True)
+            if result is not None:
+                self.logger.info(
+                    "cache backup loaded namespace=%s resource=%s type=%s",
+                    service.namespace, service.name, _resource_type(service),
+                )
+            return result
         except CACHE_READ_ERRORS as error:
             self.logger.error("failed to read cache backup for %s: %s", service.name, error)
             return None

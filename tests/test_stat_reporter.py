@@ -23,6 +23,7 @@ from aiohttp import ClientSession, web
 from prometheus_client.parser import text_string_to_metric_families
 
 from polaris import Configuration, ConsumerAPI, ProviderAPI, init_context_by_config
+from polaris.api import log
 from polaris.pkg.model.context import new_value_context
 from polaris.pkg.model.error import SDKError
 from polaris.pkg.model.service import RetStatus, ServiceCallResult, ServiceInfo
@@ -33,12 +34,16 @@ from polaris.plugin_manager import InitContext
 from tests.test_ai import instance, runtime
 
 
-def reporter(**options):
+def reporter_init(**options):
     config = Configuration.from_dict({"global": {"admin": {"host": "127.0.0.1", "port": 0},
         "api": {"bindIP": "192.0.2.1"}, "statReporter": {"plugin": {"prometheus": options}}}}, apply_env=False)
     config.set_default()
     config.verify()
-    return PrometheusReporter(InitContext(config, new_value_context()))
+    return InitContext(config, new_value_context())
+
+
+def reporter(**options):
+    return PrometheusReporter(reporter_init(**options))
 
 
 def call(delay=12, **kwargs):
@@ -87,9 +92,38 @@ def test_result_status_and_missing_delay(status):
     assert values["upstream_rq_total"][0].labels["callee_result_code"] == NULL
 
 
+def test_aggregate_is_debug_and_revision_info_is_rate_limited(tmp_path):
+    context_log = log.ContextLogger("client", log.LogOptions(level="debug", log_dir=tmp_path))
+    stat_log = context_log.get_logger("statReport")
+    init_context = reporter_init()
+    init_context.logger = context_log
+    stats = PrometheusReporter(init_context)
+    try:
+        stats.aggregate()
+        first = stat_log.file_path.read_text()
+        assert "[DEBUG]" in first and "aggregate completed" in first and "requests=0" in first
+        assert first.count("revision collector inc current revision") == 1
+
+        stats._last_pull_revision_log = float("inf")
+        stats.report(call())
+        stats.aggregate()
+        active = stat_log.file_path.read_text()
+        assert "activeSeries=1 requests=1" in active
+        assert active.count("revision collector inc current revision") == 1
+        assert "[INFO] " not in "\n".join(
+            line for line in active.splitlines() if "aggregate completed" in line
+        )
+    finally:
+        context_log.close()
+
+
 @pytest.mark.asyncio
-async def test_real_pull_listener_and_close_release_port():
-    stats = reporter(path="/custom")
+async def test_real_pull_listener_and_close_release_port(tmp_path):
+    context_log = log.ContextLogger("client", log.LogOptions(level="debug", log_dir=tmp_path))
+    stat_log = context_log.get_logger("statReport")
+    init_context = reporter_init(path="/custom")
+    init_context.logger = context_log
+    stats = PrometheusReporter(init_context)
     await stats.start(None)
     stats.report(call(method="echo"))
     stats.aggregate()
@@ -104,11 +138,40 @@ async def test_real_pull_listener_and_close_release_port():
                 assert response.status == 404
     finally:
         await stats.close()
+        context_log.close()
     assert stats.runner is None and stats.task is None
     assert stats.meta_info() is None
+    text = stat_log.file_path.read_text()
+    assert "reporter started path=/custom" in text
+    assert "endpoint ready port=" in text
+    assert "aggregate completed" in text
+    assert "served path=/custom" in text
+    assert "reporter stopped" in text
     server = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", port)
     server.close()
     await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_disabled_pull_reporter_logs_reason_without_false_stop(tmp_path):
+    context_log = log.ContextLogger("client", log.LogOptions(log_dir=tmp_path))
+    config = Configuration.from_dict({
+        "global": {
+            "admin": {"host": "127.0.0.1", "port": -1},
+            "statReporter": {"plugin": {"prometheus": {}}},
+        },
+    }, apply_env=False)
+    config.set_default()
+    config.verify()
+    init_context = InitContext(config, new_value_context())
+    init_context.logger = context_log
+    stats = PrometheusReporter(init_context)
+    await stats.start(None)
+    await stats.close()
+    text = context_log.get_logger("statReport").file_path.read_text()
+    context_log.close()
+    assert "reporter disabled because global.admin.port < 0" in text
+    assert "reporter stopped" not in text
 
 
 @pytest.mark.asyncio

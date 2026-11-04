@@ -21,7 +21,13 @@ import time
 
 import grpc
 import pytest
-from polarismesh_specification.api.v1.service_manage import grpcapi_pb2_grpc, request_pb2, response_pb2, service_pb2
+from polarismesh_specification.api.v1.service_manage import (
+    client_pb2,
+    grpcapi_pb2_grpc,
+    request_pb2,
+    response_pb2,
+    service_pb2,
+)
 
 from polaris.api import log
 from polaris.pkg.config.api import Configuration
@@ -264,7 +270,45 @@ async def test_unary_retry_logs_to_context_network_category(tmp_path):
         assert "[clientId=client] Polaris RegisterInstance on first:8091 failed with UNAVAILABLE" in (
             network.file_path.read_text())
         assert "retrying on second:8091" in network.file_path.read_text()
+        assert "Polaris RegisterInstance success address=second:8091 code=200000" in (
+            network.file_path.read_text())
         assert "retrying" not in context_log.file_path.read_text()
+    finally:
+        await connection.close()
+        context_log.close()
+
+
+@pytest.mark.asyncio
+async def test_report_client_success_logs_to_base_category(tmp_path):
+    context_log = log.ContextLogger("client", log.LogOptions(level="debug", log_dir=tmp_path))
+    connection = GrpcConnection(
+        GrpcSettings(addresses=["registry:8091"], timeout_seconds=1),
+        context_logger=context_log,
+    )
+
+    class Stub:
+        async def ReportClient(self, request, timeout=None, metadata=()):
+            response = response_pb2.Response(code={"value": 200000})
+            response.client.location.region.value = "region-a"
+            response.client.location.zone.value = "zone-a"
+            response.client.location.campus.value = "campus-a"
+            return response
+
+    async def stub(address):
+        return Stub()
+
+    connection._stub = stub
+    try:
+        response = await connection.report_client(client_pb2.Client())
+        assert response.code.value == 200000
+        base = context_log.get_logger("base").file_path.read_text()
+        network = context_log.get_logger("network").file_path.read_text()
+        assert "reportClient success address=registry:8091 serverCode=200000" in base
+        assert "location=region-a/zone-a/campus-a" in base
+        base_line = next(line for line in base.splitlines() if "reportClient success" in line)
+        network_line = next(line for line in network.splitlines() if "Polaris ReportClient success" in line)
+        assert "[INFO]" in base_line
+        assert "[DEBUG]" in network_line
     finally:
         await connection.close()
         context_log.close()

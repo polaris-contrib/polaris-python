@@ -79,7 +79,8 @@ async def get_load_cache_values(registry: LocalCache, filters: CacheFilter, load
     if instances and instances.is_initialized():
         result.dest_instances = copy.copy(instances)
     elif load:
-        logger.info("miss local cache and begin to load remote value for %s", filters.desc_instances_filter.__dict__)
+        logger.debug("miss local cache and begin to load remote value for %s",
+                     filters.desc_instances_filter.__dict__)
         try:
             await registry.load_instances(filters.service, filters.namespace, use_discover_cache, timeout=timeout)
         except SDKError as error:

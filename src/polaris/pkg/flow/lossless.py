@@ -202,6 +202,13 @@ class LosslessManager:
         self._rule_refresh_tasks: Dict[tuple, set] = {}
         self._rule_query_timeout = config.get_global().get_api().get_timeout() / 1000
         self._closed = False
+        lossless_logger.info(
+            "lossless controller initialized enabled=%s strategy=%s "
+            "delayRegisterInterval=%dms healthCheckInterval=%dms",
+            self.enabled, self._lossless_config.get_strategy(),
+            self._lossless_config.get_delay_register_interval(),
+            self._lossless_config.get_health_check_interval(),
+        )
 
     def set_action_provider(self, instance: LosslessInstance, provider: LosslessActionProvider) -> None:
         self._action_providers[instance] = provider
@@ -234,7 +241,14 @@ class LosslessManager:
             cached = self._rules_cache.get(key)
             return list(cached[0]) if cached else []
         revision = response.service.revision.value if response.service.HasField("revision") else ""
+        previous = self._rules_cache.get(key)
         self._rules_cache[key] = (rules, revision, time.monotonic())
+        log_rules = (lossless_logger.info if previous is None or previous[1] != revision
+                     else lossless_logger.debug)
+        log_rules(
+            "lossless rules fetched namespace=%s service=%s rules=%d revision=%s",
+            namespace, service, len(rules), revision,
+        )
         return list(rules)
 
     def touch_rules(self, namespace: str, service: str) -> None:
@@ -343,7 +357,7 @@ class LosslessManager:
             try:
                 ready = await provider.do_health_check()
             except Exception as error:
-                lossless_logger.warning("lossless health check failed for %s: %s", instance, error)
+                lossless_logger.error("lossless health check failed for %s: %s", instance, error)
                 ready = False
             if ready:
                 lossless_logger.info("lossless health check passed for %s, start register", instance)
@@ -477,6 +491,10 @@ class LosslessManager:
             if weight < base_weight:
                 index = result.instances.index(node)
                 result.instances[index] = _WarmupInstance(node, weight)
+        lossless_logger.debug(
+            "lossless warmup applied namespace=%s service=%s instances=%d",
+            namespace, service, len(warming),
+        )
         return result
 
     def warmup_start_timestamp(self, instance: LosslessInstance) -> Optional[float]:
@@ -524,8 +542,14 @@ class HttpLosslessActionProvider(LosslessActionProvider):
         try:
             async with ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers={"User-Agent": "polaris"}) as response:
-                    return response.status < 400
-        except Exception:
+                    if response.status < 400:
+                        return True
+                    lossless_logger.error(
+                        "lossless health check returned status=%d for %s", response.status, self._instance,
+                    )
+                    return False
+        except Exception as error:
+            lossless_logger.error("lossless health check failed for %s: %s", self._instance, error)
             return False
 
     def is_enable_health_check(self) -> bool:

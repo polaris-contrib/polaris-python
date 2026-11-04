@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 import time
@@ -38,6 +39,7 @@ sys.path[:0] = [str(REPO / "src"), str(REPO)]
 from examples._internal._runtime import verification_directory
 from examples.lossless.consumer import main as consumer_demo
 from examples.lossless.provider import main as provider_demo
+from polaris.api.log import LOG_CATEGORIES
 from polaris.plugin.server_connector.grpc_connector.connection import GrpcConnection
 
 
@@ -116,6 +118,19 @@ async def wait_until(predicate, timeout=3):
     raise AssertionError("condition was not met before timeout")
 
 
+def assert_category_logs(component, expectations):
+    assert set(expectations) == set(LOG_CATEGORIES), (
+        f"{component} expectations do not cover {set(LOG_CATEGORIES) - set(expectations)}"
+    )
+    root = Path(os.environ["POLARIS_DEMO_RUN_DIR"]) / "polaris" / "log" / component
+    for category, markers in expectations.items():
+        files = [path for path in (root / category).glob("*.log") if not path.name.startswith(".")]
+        text = "\n".join(path.read_text() for path in files)
+        assert text.strip(), f"{component} category {category} did not produce diagnostic logs"
+        missing = [marker for marker in markers if marker not in text]
+        assert not missing, f"{component} category {category} is missing {missing}"
+
+
 async def verify():
     stub = RegistryStub()
 
@@ -182,6 +197,31 @@ async def verify():
     assert "Discover" in methods and "ReportClient" in methods
     assert any(method == "Discover" and request.type == 103 for method, request, _ in stub.calls)
     assert any(method == "Discover" and request.type == 1 for method, request, _ in stub.calls)
+    assert_category_logs("provider", {
+        "base": ("polaris engine initializing", "polaris engine initialized",
+                 "success to start polaris engine", "registerInstance success",
+                 "instance heartbeat task started"),
+        "network": ("instance registered",),
+        "cache": ("cache backup initialized", "cache backup writer started"),
+        "route": ("router chains initialized",),
+        "circuitbreaker": ("circuit breaker chain initialized",),
+        "statReport": ("reporter started", "endpoint ready"),
+        "event": ("event center initialized",),
+        "lossless": ("lossless controller initialized", "lossless rules fetched"),
+        "admin": ("admin http server listening",),
+    })
+    assert_category_logs("consumer", {
+        "base": ("polaris engine initializing", "polaris engine initialized",
+                 "success to start polaris engine"),
+        "network": ("Discover stream opened",),
+        "cache": ("cache backup written",),
+        "route": ("router chains initialized",),
+        "circuitbreaker": ("circuit breaker chain initialized",),
+        "statReport": ("reporter disabled because global.admin.port < 0",),
+        "event": ("event center initialized",),
+        "lossless": ("lossless controller initialized", "lossless rules fetched"),
+        "admin": ("admin http server disabled",),
+    })
     print(json.dumps({
         "lossless": "passed", "readiness": True, "http_calls": len(provider_info["http_calls"]),
         "deregistered": True,

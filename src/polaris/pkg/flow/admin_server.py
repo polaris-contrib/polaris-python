@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import time
+
 from aiohttp import web
 
 import polaris.api.log as logger
@@ -32,11 +34,26 @@ class AdminHttpServer:
 
     def __init__(self, admin_config: AdminConfig):
         self.admin_config = admin_config
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._log_request])
         self.runner = None
         self.port = None
         self._routes = {}
         self._started = False
+
+    @staticmethod
+    @web.middleware
+    async def _log_request(request, handler):
+        started = time.monotonic()
+        try:
+            response = await handler(request)
+        except Exception as error:
+            admin_logger.error("admin http %s %s failed: %s", request.method, request.path, error)
+            raise
+        admin_logger.debug(
+            "admin http %s %s status=%d cost=%.3fms",
+            request.method, request.path, response.status, (time.monotonic() - started) * 1000,
+        )
+        return response
 
     def add_route(self, method: str, path: str, handler) -> None:
         key = (method, path)
@@ -51,9 +68,13 @@ class AdminHttpServer:
 
     async def start(self) -> None:
         """Bind the configured admin address once all routes have been added."""
-        if self._started or not self._routes:
+        if self._started:
             return
-        if self.admin_config.port is None or self.admin_config.port < 0:
+        if not self._routes or self.admin_config.port is None or self.admin_config.port < 0:
+            admin_logger.info(
+                "admin http server disabled host=%s port=%s routes=%d",
+                self.admin_config.host, self.admin_config.port, len(self._routes),
+            )
             return
         self.runner = web.AppRunner(self.app, access_log=None)
         await self.runner.setup()
@@ -67,11 +88,17 @@ class AdminHttpServer:
                            f"Cannot bind admin listener {self.admin_config.host}:{self.admin_config.port}: {error}") from error
         self.port = site._server.sockets[0].getsockname()[1]
         self._started = True
-        admin_logger.warning("admin http server listen on %s:%s", self.admin_config.host, self.port)
+        admin_logger.info(
+            "admin http server listening host=%s port=%s routes=%d",
+            self.admin_config.host, self.port, len(self._routes),
+        )
 
     async def close(self) -> None:
+        started = self._started
         if self.runner is not None:
             await self.runner.cleanup()
             self.runner = None
         self._started = False
         self.port = None
+        if started:
+            admin_logger.info("admin http server stopped")

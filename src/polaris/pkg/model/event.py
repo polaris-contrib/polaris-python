@@ -97,6 +97,8 @@ class EventCenter:
         self._lock = RLock()
         self._listeners = []
         self.register_listener(self._log_event)
+        if self.logger is not None:
+            self.logger.info("event center initialized")
 
     @staticmethod
     def _listener_name(listener):
@@ -142,6 +144,8 @@ class EventCenter:
         """Drop listeners when the owning context is destroyed."""
         with self._lock:
             self._listeners.clear()
+        if self.logger is not None:
+            self.logger.info("event center closed")
 
     def _log_event(self, event):
         if self.logger is None:

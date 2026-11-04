@@ -19,6 +19,7 @@ import asyncio
 import gzip
 import random
 import re
+import time
 from threading import RLock
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -43,6 +44,8 @@ METRICS = {
     "upstream_rq_min_timeout": "minimum request delay per period",
 }
 PULL_INTERVAL_SECONDS = 30
+REVISION_LOG_INTERVAL_SECONDS = 30 * 60
+PUSH_ERROR_LOG_INTERVAL_SECONDS = 30
 NULL = "__NULL__"
 
 
@@ -69,11 +72,17 @@ class PrometheusReporter(BaseStatReporter):
         self.session = None
         self.push_count = 0
         self._port = None
+        self._reported_port = None
         self.engine = None
         self.closed = False
+        self.started = False
         self.random = random.Random()
         self.push_lock = asyncio.Lock()
         self.pushing = False
+        self._last_pull_revision_log = 0.0
+        self._last_push_revision_log = 0.0
+        self._last_push_error = ""
+        self._last_push_error_log = 0.0
 
     @property
     def port(self):
@@ -119,6 +128,13 @@ class PrometheusReporter(BaseStatReporter):
     def aggregate(self, advance=True):
         """Publish this period, zero stale series, remove after two idle revisions."""
         with self.lock:
+            active_series = sum(
+                1 for revision, values in self.values.values()
+                if revision == self.period and values[0] > 0
+            )
+            request_count = sum(
+                values[0] for revision, values in self.values.values() if revision == self.period
+            )
             for key, (revision, values) in list(self.values.items()):
                 for name, value in zip(METRICS, values):
                     labels = (*key, NULL)
@@ -130,26 +146,52 @@ class PrometheusReporter(BaseStatReporter):
                     del self.values[key]
             if advance:
                 self.period += 1
+            if not advance:
+                return
+            self.logger.debug(
+                "[metrics][%s] aggregate completed period=%d activeSeries=%d requests=%d retainedSeries=%d",
+                self.config.type, self.period, active_series, request_count, len(self.values),
+            )
+            now = time.monotonic()
+            if now - self._last_pull_revision_log >= REVISION_LOG_INTERVAL_SECONDS:
+                self.logger.info(
+                    "[metrics][pull] revision collector inc current revision to %d", self.period,
+                )
+                self._last_pull_revision_log = now
 
     def render(self):
         """Return the current exported Prometheus text without advancing the period."""
         with self.lock:
-            return generate_latest(self.registry)
+            data = generate_latest(self.registry)
+            self.logger.debug(
+                "[metrics][%s] render completed period=%d series=%d bytes=%d",
+                self.config.type, self.period, len(self.values), len(data),
+            )
+            return data
 
     def meta_info(self):
         """Advertise the pull endpoint in the SDK client report, never in push mode."""
         if not self.enabled or self.closed or self.port is None or self.config.type != "pull":
             return None
-        return {"target": "prometheus", "port": self.port, "path": self.config.path, "protocol": "http"}
+        port = self.port
+        if port != self._reported_port:
+            self._reported_port = port
+            self.logger.info(
+                "[metrics][pull] endpoint ready port=%s path=%s", port, self.config.path,
+            )
+        return {"target": "prometheus", "port": port, "path": self.config.path, "protocol": "http"}
 
     async def start(self, engine):
         """Start pull or push resources after the SDK address is resolved."""
         self.engine = engine
         if not self.enabled:
+            self.logger.info("[metrics] reporter disabled by configuration")
             return
         admin = self.global_config.get_admin()
         if self.config.type == "pull":
             if admin.port < 0:
+                self.logger.warning(
+                    "[metrics][pull] reporter disabled because global.admin.port < 0")
                 self.enabled = False
                 return
             shared = getattr(engine, "admin_server", None) if engine is not None else None
@@ -179,9 +221,21 @@ class PrometheusReporter(BaseStatReporter):
         else:
             self.session = ClientSession(timeout=ClientTimeout(total=self.global_config.get_api().timeout / 1000))
         self.task = asyncio.create_task(self._run(), name="polaris-prometheus")
+        self.started = True
+        interval = self.config.push_interval / 1000 if self.config.type == "push" else PULL_INTERVAL_SECONDS
+        port = self.port if self.port is not None else admin.port
+        self.logger.info(
+            "[metrics][%s] reporter started path=%s interval=%.3fs admin=%s:%s",
+            self.config.type, self.config.path, interval, admin.host, port,
+        )
 
     async def _metrics(self, request):
-        return web.Response(body=self.render(), headers={"Content-Type": CONTENT_TYPE_LATEST})
+        data = self.render()
+        self.logger.debug(
+            "[metrics][pull] served path=%s port=%s series=%d bytes=%d",
+            request.path, self.port, len(self.values), len(data),
+        )
+        return web.Response(body=data, headers={"Content-Type": CONTENT_TYPE_LATEST})
 
     async def _address(self):
         if self.config.address:
@@ -252,6 +306,20 @@ class PrometheusReporter(BaseStatReporter):
         else:
             with self.lock:
                 self.period += 1
+            if self._last_push_error:
+                self.logger.info(
+                    "[metrics][push] push metrics to pushgateway recovered (was failing: %s)",
+                    self._last_push_error,
+                )
+                self._last_push_error = ""
+            self.logger.debug("[metrics][push] exported period=%d series=%d target=%s",
+                              self.period, len(snapshot), target)
+            now = time.monotonic()
+            if now - self._last_push_revision_log >= REVISION_LOG_INTERVAL_SECONDS:
+                self.logger.info(
+                    "[metrics][push] revision collector inc current revision to %d", self.period,
+                )
+                self._last_push_revision_log = now
         finally:
             with self.lock:
                 self.pushing = False
@@ -266,11 +334,30 @@ class PrometheusReporter(BaseStatReporter):
                 else:
                     self.aggregate()
             except Exception as error:
-                self.logger.warning("Metrics export failed; retaining current period: %s", error)
+                if self.config.type == "push":
+                    self._log_push_error(error)
+                else:
+                    self.logger.warning("Metrics export failed; retaining current period: %s", error)
+
+    def _log_push_error(self, error):
+        error_text = str(error)
+        now = time.monotonic()
+        if (error_text != self._last_push_error
+                or now - self._last_push_error_log >= PUSH_ERROR_LOG_INTERVAL_SECONDS):
+            if not self._last_push_error:
+                self.logger.error("push metrics to pushgateway fail: %s", error_text)
+            else:
+                self.logger.warning(
+                    "push metrics to pushgateway still failing (last error unchanged for %.0fs): %s",
+                    now - self._last_push_error_log, error_text,
+                )
+            self._last_push_error_log = now
+        self._last_push_error = error_text
 
     async def close(self):
         """Cancel the task before closing its listener and outgoing HTTP session."""
         self.closed = True
+        self._reported_port = None
         if self.task is not None:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
@@ -281,3 +368,6 @@ class PrometheusReporter(BaseStatReporter):
         if self.session is not None:
             await self.session.close()
             self.session = None
+        if self.started:
+            self.started = False
+            self.logger.info("[metrics][%s] reporter stopped", self.config.type)
