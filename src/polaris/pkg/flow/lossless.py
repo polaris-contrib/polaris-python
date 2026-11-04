@@ -196,6 +196,7 @@ class LosslessManager:
         self._register_timestamps: Dict[LosslessInstance, float] = {}
         self._register_tasks: Dict[LosslessInstance, asyncio.Task] = {}
         self._register_generations: Dict[LosslessInstance, int] = {}
+        self._desired_statuses: Dict[LosslessInstance, RegisterStatus] = {}
         self._rules_cache: Dict[tuple, tuple] = {}
         self._rules_fetching: set = set()
         self._rule_refresh_tasks: Dict[tuple, set] = {}
@@ -291,6 +292,7 @@ class LosslessManager:
         if provider is None:
             lossless_logger.warning("no lossless action provider for %s, skip lossless register", instance)
             return
+        self._desired_statuses[instance] = RegisterStatus.REGISTERED
         if not self.enabled:
             lossless_logger.info("lossless disabled, register %s directly", instance)
             await self._do_register(instance, generation)
@@ -353,26 +355,32 @@ class LosslessManager:
         properties = InstanceProperties()
         await provider.do_register(properties)
         if generation is not None and not self._is_current_register(instance, generation):
-            lossless_logger.warning("lossless offline superseded registration for %s", instance)
-            await provider.do_deregister()
-            self._register_statuses[instance] = RegisterStatus.UNREGISTERED
+            if self._closed or self._desired_statuses.get(instance) == RegisterStatus.UNREGISTERED:
+                lossless_logger.warning("lossless offline superseded registration for %s", instance)
+                await provider.do_deregister()
+                if self._closed or self._desired_statuses.get(instance) == RegisterStatus.UNREGISTERED:
+                    self._register_statuses[instance] = RegisterStatus.UNREGISTERED
+            else:
+                lossless_logger.info("lossless registration for %s was superseded by a newer register", instance)
             return
         self._register_statuses[instance] = RegisterStatus.REGISTERED
         self._register_timestamps[instance] = time.time()
 
     async def lossless_deregister(self, instance: LosslessInstance) -> None:
         """Deregister immediately so consumers can remove the instance."""
-        self._next_register_generation(instance)
+        generation = self._next_register_generation(instance)
         provider = self._action_providers.get(instance)
         if provider is None:
             lossless_logger.warning("no lossless action provider for %s, skip lossless deregister", instance)
             return
+        self._desired_statuses[instance] = RegisterStatus.UNREGISTERED
         task = self._register_tasks.pop(instance, None)
         if task is not None and not task.done():
             task.cancel()
         self._register_statuses[instance] = RegisterStatus.UNREGISTERED
         await provider.do_deregister()
-        self._register_statuses[instance] = RegisterStatus.UNREGISTERED
+        if self._register_generations.get(instance) == generation:
+            self._register_statuses[instance] = RegisterStatus.UNREGISTERED
 
     def check_register_status(self) -> RegisterStatus:
         """Return REGISTERED only when every tracked instance is registered."""

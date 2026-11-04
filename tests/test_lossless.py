@@ -90,6 +90,29 @@ class StalledConnector:
         return response_pb2.DiscoverResponse()
 
 
+class BlockingActionProvider(FakeActionProvider):
+    """Block the first register or deregister RPC until the test releases it."""
+
+    def __init__(self):
+        super().__init__()
+        self.register_entered = asyncio.Event()
+        self.release_register = asyncio.Event()
+        self.deregister_entered = asyncio.Event()
+        self.release_deregister = asyncio.Event()
+
+    async def do_register(self, instance_properties: InstanceProperties):
+        self.register_count += 1
+        if self.register_count == 1:
+            self.register_entered.set()
+            await self.release_register.wait()
+
+    async def do_deregister(self):
+        self.deregister_count += 1
+        if self.deregister_count == 1:
+            self.deregister_entered.set()
+            await self.release_deregister.wait()
+
+
 def lossless_configuration(**kwargs):
     config = Configuration()
     config.set_default()
@@ -202,6 +225,52 @@ async def test_deregister_during_rule_query_prevents_late_registration():
     assert provider.deregister_count == 1
     assert provider.register_count == 0
     assert manager.check_register_status() == RegisterStatus.UNREGISTERED
+
+
+@pytest.mark.asyncio
+async def test_slow_stale_register_does_not_deregister_newer_register():
+    manager = LosslessManager(lossless_configuration(enable=False), FakeConnector())
+    provider = BlockingActionProvider()
+    instance = lossless_instance()
+    manager.set_action_provider(instance, provider)
+
+    first = asyncio.create_task(manager.lossless_register(instance))
+    await asyncio.wait_for(provider.register_entered.wait(), timeout=0.2)
+    deregistering = asyncio.create_task(manager.lossless_deregister(instance))
+    await asyncio.wait_for(provider.deregister_entered.wait(), timeout=0.2)
+    provider.release_deregister.set()
+    await deregistering
+    await manager.lossless_register(instance)
+    assert manager.check_register_status() == RegisterStatus.REGISTERED
+
+    provider.release_register.set()
+    await first
+    assert provider.register_count == 2
+    assert provider.deregister_count == 1
+    assert manager.check_register_status() == RegisterStatus.REGISTERED
+
+
+@pytest.mark.asyncio
+async def test_slow_stale_deregister_does_not_override_newer_register():
+    manager = LosslessManager(lossless_configuration(enable=False), FakeConnector())
+    provider = BlockingActionProvider()
+    instance = lossless_instance()
+    manager.set_action_provider(instance, provider)
+    initial = asyncio.create_task(manager.lossless_register(instance))
+    await asyncio.wait_for(provider.register_entered.wait(), timeout=0.2)
+    provider.release_register.set()
+    await initial
+
+    deregistering = asyncio.create_task(manager.lossless_deregister(instance))
+    await asyncio.wait_for(provider.deregister_entered.wait(), timeout=0.2)
+    await manager.lossless_register(instance)
+    assert manager.check_register_status() == RegisterStatus.REGISTERED
+
+    provider.release_deregister.set()
+    await deregistering
+    assert provider.register_count == 2
+    assert provider.deregister_count == 1
+    assert manager.check_register_status() == RegisterStatus.REGISTERED
 
 
 def test_server_delay_by_time_enum_zero_overrides_local_health_check():

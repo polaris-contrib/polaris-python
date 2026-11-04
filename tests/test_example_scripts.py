@@ -234,6 +234,11 @@ def test_example_registry_matches_makefile_and_scenario_files():
         assert (REPO / "examples" / script).is_file(), name
 
 
+def test_macos_ds_store_is_ignored():
+    result = subprocess.run(["git", "check-ignore", "-q", ".DS_Store"], cwd=REPO)
+    assert result.returncode == 0
+
+
 @pytest.mark.parametrize("script", ["verify.sh", "verify_e2e.sh", "logs.sh", "cleanup.sh"])
 def test_root_example_scripts_print_usage(script):
     path = REPO / "examples" / script
