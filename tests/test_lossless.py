@@ -741,7 +741,7 @@ async def test_provider_api_lossless_register_and_deregister(monkeypatch, tmp_pa
         await provider.async_lossless_register(request)
         assert not any(call[0] == "RegisterInstance" for call in stub.calls)
         deadline = time.monotonic() + 2
-        while time.monotonic() < deadline and not any(call[0] == "RegisterInstance" for call in stub.calls):
+        while time.monotonic() < deadline and request.instance_id != "registered":
             await asyncio.sleep(0.01)
         assert any(call[0] == "RegisterInstance" for call in stub.calls)
         assert request.instance_id == "registered"

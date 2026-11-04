@@ -79,8 +79,8 @@ class PrometheusReporter(BaseStatReporter):
         self.random = random.Random()
         self.push_lock = asyncio.Lock()
         self.pushing = False
-        self._last_pull_revision_log = 0.0
-        self._last_push_revision_log = 0.0
+        self._last_pull_revision_log = None
+        self._last_push_revision_log = None
         self._last_push_error = ""
         self._last_push_error_log = 0.0
 
@@ -153,7 +153,8 @@ class PrometheusReporter(BaseStatReporter):
                 self.config.type, self.period, active_series, request_count, len(self.values),
             )
             now = time.monotonic()
-            if now - self._last_pull_revision_log >= REVISION_LOG_INTERVAL_SECONDS:
+            if (self._last_pull_revision_log is None
+                    or now - self._last_pull_revision_log >= REVISION_LOG_INTERVAL_SECONDS):
                 self.logger.info(
                     "[metrics][pull] revision collector inc current revision to %d", self.period,
                 )
@@ -315,7 +316,8 @@ class PrometheusReporter(BaseStatReporter):
             self.logger.debug("[metrics][push] exported period=%d series=%d target=%s",
                               self.period, len(snapshot), target)
             now = time.monotonic()
-            if now - self._last_push_revision_log >= REVISION_LOG_INTERVAL_SECONDS:
+            if (self._last_push_revision_log is None
+                    or now - self._last_push_revision_log >= REVISION_LOG_INTERVAL_SECONDS):
                 self.logger.info(
                     "[metrics][push] revision collector inc current revision to %d", self.period,
                 )
