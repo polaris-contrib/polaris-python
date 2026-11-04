@@ -148,20 +148,20 @@ class CircuitBreaker(BaseCircuitBreaker):
             return result
         for instance in instance_list:
             if self.close2Open(instance, now):
-                logger.warning("open circuit break for %s:%d", instance.get_host(), instance.get_port())
+                logger.info("open circuit break for %s:%d", instance.get_host(), instance.get_port())
                 result.instance_2_open.append(instance)
                 continue
             elif self.open2halfopen(instance, now):
-                logger.warning("half open circuit break for %s:%d", instance.get_host(), instance.get_port())
+                logger.info("half open circuit break for %s:%d", instance.get_host(), instance.get_port())
                 result.instance_2_halfopen.append(instance)
                 continue
             elif self.halfopen2open(instance, now):
-                logger.warning("open circuit break after half open for %s:%d", instance.get_host(), instance.get_port())
+                logger.info("open circuit break after half open for %s:%d", instance.get_host(), instance.get_port())
                 result.instance_2_open.append(instance)
                 continue
             elif self.halfopen2close(instance, now):
-                logger.warning("close circuit break after half open for %s:%d", instance.get_host(),
-                               instance.get_port())
+                logger.info("close circuit break after half open for %s:%d", instance.get_host(),
+                            instance.get_port())
                 result.instance_2_close.append(instance)
                 continue
 

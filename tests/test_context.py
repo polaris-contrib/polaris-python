@@ -33,6 +33,7 @@ from polaris import Configuration, ConsumerAPI, LogOptions, ProviderAPI, SDKErro
 from polaris.api import log
 from polaris.pkg.model.context import ContextKeyEngine
 from polaris.pkg.model.core import EventType as ModelEventType, ServiceEventKey
+from polaris.pkg.model.error import ErrorCode
 from polaris.pkg.model.server import InstanceDiscoverRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import GetInstancesRequest
 from polaris.pkg.model import util
@@ -720,10 +721,24 @@ def test_context_plugins_use_their_category_logs_and_close_all_handlers(contexts
         assert network.file_path == tmp_path / "logs" / "network" / f"polaris-network-{client.get_client_id()}.log"
         assert discover(client).get_id().endswith(":8091")
         engine.file_cache.queue.join()
-        assert "success to back up data" in cache.file_path.read_text()
-        assert "success to back up data" not in context_log.file_path.read_text()
+        assert "cache backup written" in cache.file_path.read_text()
+        assert "cache backup written" not in context_log.file_path.read_text()
         network.info("network-only-%s", client.get_client_id())
         assert "network-only" not in context_log.file_path.read_text()
+        markers = {
+            "base": "polaris engine initialized",
+            "network": "Polaris ReportClient success",
+            "cache": "cache backup initialized",
+            "route": "router chains initialized",
+            "circuitbreaker": "circuit breaker chain initialized",
+            "statReport": "reporter started",
+            "event": "event center initialized",
+            "lossless": "lossless controller initialized",
+            "admin": "admin http server",
+        }
+        for category, marker in markers.items():
+            text = context_log.get_logger(category).file_path.read_text()
+            assert marker in text, f"{client.get_client_id()} {category} did not log {marker!r}"
     first.destroy()
     first_log, second_log = first.get_value_context().logger, second.get_value_context().logger
     assert all(instance.handler.stream is None for instance in first_log._categories.values())
@@ -745,6 +760,30 @@ def test_context_disk_queues_use_configured_independent_directories(contexts):
             response_pb2.DiscoverResponse(),
         )
         assert response.service.revision.value == expected
+
+
+@pytest.mark.asyncio
+async def test_cache_refresh_logs_debug_when_revision_is_unchanged(contexts, tmp_path):
+    client = contexts("cache-level", options=LogOptions(level="debug", log_dir=tmp_path / "logs"))
+    engine = client.get_engine()
+    instances = await ConsumerAPI(client).async_get_instances(
+        GetInstancesRequest(namespace="ns", service="svc"))
+    assert instances.instances[0].get_id().endswith(":8091")
+    task = next(iter(engine.update_task_set.values()))
+
+    async def unchanged(request, use_discover_cache=True):
+        del request, use_discover_cache
+        raise SDKError(ErrorCode.ErrCodeDataNotChange, "unchanged")
+
+    engine.svc_connector.discover = unchanged
+    task.last_update_time = 0
+    await engine._run_async(engine.process_update_task(task))
+
+    text = client.get_value_context().logger.get_logger("cache").file_path.read_text()
+    assert any("[INFO]" in line and "cache snapshot loaded" in line for line in text.splitlines())
+    unchanged_lines = [line for line in text.splitlines() if "Data not change for updating" in line]
+    assert unchanged_lines
+    assert all("[DEBUG]" in line for line in unchanged_lines)
 
 
 def test_failed_context_initialization_releases_its_resources_without_affecting_existing(

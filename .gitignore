@@ -49,5 +49,4 @@ polaris-*.log
 /polaris
 .polaris_multicontext/
 .polaris_cache/
-
-uv.lock
+/.agents/

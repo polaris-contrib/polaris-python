@@ -13,7 +13,8 @@ uv run --locked python examples/circuitbreaker/provider/main.py --port 18082 --s
 `/switch?status=404` can select another code in 200..599. Invalid switches return 400 without
 changing the existing state. These controls are unauthenticated and must remain test-only.
 
-`--host` is the explicit business registration address, not the SDK `bindIP`.
+The registered IP defaults to `get_local_host(POLARIS_SERVER_ADDRESS)`; `--host` can
+override it and is independent of the SDK `bindIP`.
 `--service-token` defaults to `POLARIS_SERVICE_TOKEN`. Registration uses `register_instance()`
 with automatic heartbeats; `--ttl` defaults to 5 seconds. Ctrl+C / SIGTERM stops HTTP serving,
 deregisters and destroys the context. `--port 0` picks a temporary port and prints it at startup.

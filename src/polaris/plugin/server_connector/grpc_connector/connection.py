@@ -38,6 +38,7 @@ from polaris.pkg.model.error import ErrorCode, SDKError, response_code, ServerCo
 from polaris.api.log import ContextLogger, get_logger
 
 logger = get_logger("network")
+base_logger = get_logger("base")
 
 _REQUEST_ID_PREFIX = {
     "RegisterInstance": "1",
@@ -59,6 +60,16 @@ def _request_id(method: str) -> tuple[tuple[str, str], ...]:
     if prefix is None:
         return ()
     return (("request-id", f"{prefix}{next(_REQUEST_ID_SEEDS[prefix])}"),)
+
+
+def _response_location(response) -> str:
+    try:
+        if response.HasField("client") and response.client.HasField("location"):
+            location = response.client.location
+            return f"{location.region.value}/{location.zone.value}/{location.campus.value}"
+    except (AttributeError, ValueError):
+        pass
+    return "-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +100,8 @@ class GrpcConnection:
         self.settings = settings
         self.logger = (context_logger.get_logger("network") if isinstance(context_logger, ContextLogger)
                        else context_logger if context_logger is not None else logger)
+        self.base_logger = (context_logger.get_logger("base") if isinstance(context_logger, ContextLogger)
+                            else base_logger)
         self._addresses = [address.strip() for address in settings.addresses if address.strip()]
         self._channels: dict[str, grpc.aio.Channel] = {}
         self._stubs: dict[str, grpcapi_pb2_grpc.PolarisGRPCStub] = {}
@@ -113,10 +126,15 @@ class GrpcConnection:
             if self._closed:
                 raise SDKError(ErrorCode.ErrCodeInvalidStateError, "gRPC connector has been closed")
             if address not in self._stubs:
+                secure = self.settings.credentials is not None
                 channel = (grpc.aio.secure_channel(address, self.settings.credentials)
                            if self.settings.credentials is not None else grpc.aio.insecure_channel(address))
                 self._channels[address] = channel
                 self._stubs[address] = self._stub_factory(channel)
+                self.logger.info(
+                    "grpc channel opened address=%s security=%s",
+                    address, "mtls" if secure else "plaintext",
+                )
             return self._stubs[address]
 
     async def _rpc_stub(self, method, address):
@@ -150,9 +168,45 @@ class GrpcConnection:
                     timeout=self.settings.timeout_seconds if timeout_seconds is None else timeout_seconds,
                     metadata=_request_id(method) + extra_metadata + self._metadata(),
                 )
+                code = response_code(response)
+                cost = (time.monotonic() - started) * 1000
+                if method == "ReportClient":
+                    if code == ServerCode.ExecuteSuccess:
+                        self.base_logger.info(
+                            "reportClient success address=%s serverCode=%s cost=%.3fms location=%s",
+                            address, code, cost, _response_location(response),
+                        )
+                    else:
+                        self.base_logger.warning(
+                            "reportClient failed address=%s serverCode=%s cost=%.3fms location=%s",
+                            address, code, cost, _response_location(response),
+                        )
+                    self.logger.debug("Polaris ReportClient success address=%s code=%s cost=%.3fms",
+                                      address, code, cost)
+                else:
+                    # Heartbeats repeat on every TTL; keep them out of the INFO stream like polaris-go.
+                    quiet_methods = {"Heartbeat", "GetServiceContract"}
+                    log_success = self.logger.debug if method in quiet_methods else self.logger.info
+                    log_success(
+                        "Polaris %s success address=%s code=%s cost=%.3fms",
+                        method, address, code, cost,
+                    )
                 return response
             except grpc.aio.AioRpcError as exc:
                 last_error = exc
+                cost = (time.monotonic() - started) * 1000
+                if method == "ReportClient":
+                    self.base_logger.warning(
+                        "reportClient failed address=%s code=%s cost=%.3fms: %s",
+                        address, exc.code().name, cost, exc.details(),
+                    )
+                    self.logger.debug("Polaris ReportClient failed address=%s code=%s cost=%.3fms: %s",
+                                      address, exc.code().name, cost, exc.details())
+                else:
+                    self.logger.error(
+                        "Polaris %s failed address=%s code=%s cost=%.3fms: %s",
+                        method, address, exc.code().name, cost, exc.details(),
+                    )
                 if exc.code() not in self._RETRYABLE_STATUS or attempt + 1 >= attempts:
                     break
                 self._address_index = (self._address_index + 1) % len(self._addresses)
@@ -296,6 +350,11 @@ class GrpcConnection:
         """Open a reconnecting discovery stream."""
         if not self._addresses:
             raise SDKError(ErrorCode.ErrCodeAPIInvalidConfig, "no Polaris server address configured")
+        service = request.service
+        self.logger.debug(
+            "Discover stream starting namespace=%s service=%s type=%s revision=%s",
+            service.namespace.value, service.name.value, request.type, service.revision.value,
+        )
         failing = False
         while not self._closed:
             if self.address_resolver is not None:
@@ -312,6 +371,10 @@ class GrpcConnection:
                 finally:
                     await session.aclose()
                 if not self._closed:
+                    self.logger.warning(
+                        "Discover stream ended namespace=%s service=%s type=%s; reconnecting",
+                        service.namespace.value, service.name.value, request.type,
+                    )
                     await asyncio.sleep(self.settings.retry_backoff_seconds)
             except grpc.aio.AioRpcError as exc:
                 if exc.code() not in self._RETRYABLE_STATUS:

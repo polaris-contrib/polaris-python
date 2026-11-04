@@ -25,7 +25,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import (
+    configure_e2e_event_reporting,
+    demo_backup_directory,
+    demo_log_options,
+    get_local_host,
+)
 from polaris import Configuration, ConsumerAPI, ProviderAPI, init_context_by_config
 from polaris.pkg.model.error import ErrorCode, SDKError
 from polaris.pkg.model.server import InstanceRegisterRequest, InstanceDeRegisterRequest
@@ -34,6 +39,8 @@ from polaris.pkg.model.service import GetAllInstancesRequest, GetOneInstanceRequ
 
 def run(args):
     """Register an already-running agent endpoint and inspect its card metadata."""
+    if not args.host:
+        args.host = get_local_host(args.server.split(",", 1)[0].strip())
     card = json.loads(Path(args.card).read_text(encoding="utf-8"))
     metadata = {"ai-agent-name": card["name"], "a2a.agent.card": json.dumps(card, ensure_ascii=True),
                 "a2a.transport": args.transport, "a2a.path": args.path}
@@ -41,6 +48,7 @@ def run(args):
         raise ValueError("A2A metadata value exceeds 65535 characters")
     config = Configuration()
     config.set_default()
+    configure_e2e_event_reporting(config)
     config.get_global().get_server_connector().addresses = args.server.split(",")
     config.get_global().get_server_connector().token = os.getenv("POLARIS_TOKEN", "")
     config.get_global().get_admin().port = 0
@@ -78,7 +86,9 @@ def run(args):
         result = {"agent": json.loads(found["a2a.agent.card"])["name"],
                   "transport": found["a2a.transport"],
                   "endpoint": f"http://{authority}:{node.get_port()}{found['a2a.path']}",
-                  "instances": len(snapshot.instances)}
+                  "instances": len(snapshot.instances),
+                  "host": host,
+                  "port": node.get_port()}
         print(json.dumps(result), flush=True)
         time.sleep(args.duration)
         return result
@@ -98,7 +108,7 @@ def main(argv=None):
     parser.add_argument("--token", default=os.getenv("POLARIS_SERVICE_TOKEN", ""))
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--service", default="demo-agent")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", help="Advertised instance IP; defaults to the Polaris route source IP")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--transport", default="JSONRPC")
     parser.add_argument("--path", default="/a2a")

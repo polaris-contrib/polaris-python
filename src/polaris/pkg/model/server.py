@@ -13,8 +13,9 @@
 # CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from polaris.pkg.model.error import SDKError, ErrorCode
 from typing import Dict
+
+from polaris.pkg.model.error import ErrorCode, SDKError
 
 
 #  InstanceDeRegisterRequest 反注册服务请求
@@ -47,9 +48,9 @@ class InstanceDeRegisterRequest:
 
     # 验证request是否合理，返回SDKERROR
     def validate(self):
-        if len(self.service_token) == 0:
+        if not isinstance(self.service_token, str):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
-                           "InstanceDeRegisterRequest: serviceToken should not be empty")
+                           "InstanceDeRegisterRequest: serviceToken must be a string")
         if len(self.instance_id) > 0:
             return
         if len(self.service) == 0:
@@ -139,9 +140,9 @@ class InstanceRegisterRequest:
         if not isinstance(self.auto_heartbeat, bool):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
                            "InstanceRegisterRequest: auto_heartbeat must be a boolean")
-        if len(self.service_token) == 0:
+        if not isinstance(self.service_token, str):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
-                           "InstanceRegisterRequest: serviceToken should not be empty")
+                           "InstanceRegisterRequest: serviceToken must be a string")
         if len(self.service) == 0:
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
                            "InstanceRegisterRequest: serviceName should not be empty when instanceId is empty")
@@ -250,9 +251,9 @@ class InstanceHeartbeatRequest:
         self.retry_count = retry_count
 
     def validate(self):
-        if len(self.service_token) == 0:
+        if not isinstance(self.service_token, str):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
-                           "InstanceHeartbeatRequest: serviceToken should not be empty")
+                           "InstanceHeartbeatRequest: serviceToken must be a string")
         if len(self.instance_id) > 0:
             return
         if len(self.service) == 0:

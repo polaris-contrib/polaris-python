@@ -34,6 +34,7 @@ from polaris.pkg.model.server import (
 )
 
 InstanceKey = tuple[str, str, str, int]
+base_logger = logger.get_logger("base")
 
 
 def _instance_key(request: InstanceRegisterRequest | InstanceDeRegisterRequest) -> InstanceKey:
@@ -96,6 +97,10 @@ class RegisterStateManager:
         state.instance_ids.add(request.instance_id)
         self._states[_instance_key(request)] = state
         state.heartbeat_task = asyncio.create_task(self._run_heartbeat(state))
+        base_logger.info(
+            "instance heartbeat task started namespace=%s service=%s host=%s port=%s ttl=%ss",
+            request.namespace, request.service, request.host, request.port, request.ttl,
+        )
 
     async def remove(
         self, request: InstanceRegisterRequest | InstanceDeRegisterRequest,
@@ -123,6 +128,14 @@ class RegisterStateManager:
     async def _cancel(states: list[RegisterState]) -> None:
         tasks = [task for state in states for task in (state.heartbeat_task, state.re_register_task)
                  if task is not None]
+        for state in states:
+            if state.heartbeat_task is None:
+                continue
+            request = state.request
+            base_logger.info(
+                "instance heartbeat task stopped namespace=%s service=%s host=%s port=%s",
+                request.namespace, request.service, request.host, request.port,
+            )
         for task in tasks:
             task.cancel()
         if tasks:
@@ -154,12 +167,16 @@ class RegisterStateManager:
         try:
             await self._heartbeat(heartbeat)
             state.heartbeat_fail_count = 0
+            base_logger.debug(
+                "instance heartbeat success namespace=%s service=%s host=%s port=%s",
+                request.namespace, request.service, request.host, request.port,
+            )
         except Exception as error:
             if isinstance(error, SDKError) and error.server_code == ServerCode.NotFoundResource:
                 state.heartbeat_fail_count += 1
             else:
                 state.heartbeat_fail_count = 0
-            logger.warning("instance heartbeat failed for %s: %s", _instance_key(request), error)
+            logger.error("instance heartbeat failed for %s: %s", _instance_key(request), error)
 
         if (not self._active(state) or state.heartbeat_fail_count < 2
                 or asyncio.get_running_loop().time() - state.first_register_time < self._min_register_interval):
@@ -184,5 +201,10 @@ class RegisterStateManager:
             state.instance_ids.add(response.instance_id)
             state.heartbeat_fail_count = 0
             state.re_register_count = 0
+            base_logger.info(
+                "instance re-registered namespace=%s service=%s host=%s port=%s instanceId=%s",
+                state.request.namespace, state.request.service,
+                state.request.host, state.request.port, response.instance_id,
+            )
         except Exception as error:
             logger.warning("instance re-registration failed for %s: %s", _instance_key(state.request), error)

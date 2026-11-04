@@ -24,7 +24,8 @@ Card 的名称与 ai-agent-name 必须一致，transport 为 JSONRPC，path 为 
 离线 namespace 为 ns；service 为 demo-agent，host/port 为 127.0.0.1:8080，端口为 8080。这个端点仅为元数据展示，不启动 Agent HTTP Server。
 注册中心使用 offline:8091 的 RPC 替身，不向该地址建立真实连接。
 示例注册的是普通 Instance，不向 SDK 增加服务专用模型。
-服务 token 为测试值 token。真实业务 host 必须由应用显式提供，SDK bindIP 不是注册 IP。
+服务 token 为测试值 token。真实入口默认把 `get_local_host(POLARIS_SERVER_ADDRESS)`
+作为注册 IP，也可用 `--host` 显式覆盖；SDK bindIP 不是注册 IP。
 
 ## 执行产物与解读
 
@@ -53,10 +54,15 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 
 步骤：
 
-1. 读取本目录 `agent-card.json`，用普通 `InstanceRegisterRequest` 注册。metadata 带 `ai-agent-name`、`a2a.agent.card`、`a2a.transport`、`a2a.path`。host 和 port 来自 card，默认 `127.0.0.1:8080`，这个端口上没有 Agent 进程。
+1. 读取本目录 `agent-card.json`，用普通 `InstanceRegisterRequest` 注册。metadata 带
+   `ai-agent-name`、`a2a.agent.card`、`a2a.transport`、`a2a.path`。注册 host 默认通过
+   `get_local_host(POLARIS_SERVER_ADDRESS)` 取得，端口使用 `8080`；这个端口上没有
+   Agent 进程，只验证实例 metadata。
 2. 从注册中心发现该服务，检查返回的 transport。
 3. 示例进程退出前显式反注册并销毁 context。
 
-通过条件是最后一行 JSON 的 `transport` 为 `JSONRPC`，并且 `instances` 至少为 1。验证器不发 JSON-RPC 请求，也不检查心跳次数。离线验证里“等待 5.2 秒确认至少一次心跳、反注册后替身为空”不在这一路重复。
+通过条件是最后一行 JSON 的 `transport` 为 `JSONRPC`，`instances` 至少为 1，
+且 `host` 等于本机到 Polaris 的路由源 IP。验证器不发 JSON-RPC 请求，也不检查心跳次数。
+离线验证里“等待 5.2 秒确认至少一次心跳、反注册后替身为空”不在这一路重复。
 
 运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`a2a.stdout.log` 是示例输出，`result.json` 的 `exit_code` 为 0 才通过。服务对象留在 Polaris 上，用 `./examples/cleanup.sh --delete-services` 删除。发现失败、metadata 写不进去或反注册失败都会非零退出。

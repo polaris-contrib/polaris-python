@@ -45,7 +45,8 @@ polaris/backup/instances 是同 context 的独立实例备份目录，Skill 不�
 本示例不注册服务或实例，只读取现有 published Skill。
 离线 Skill 使用 ns/lookup、v1；fake endpoint 为 offline:8094。
 真实 Skill 端口通常为 8094；普通发现连接默认 8091，两条连接分别持有。
-POLARIS_SERVICE_TOKEN 是统一 E2E 脚本的前置参数，Skill RPC 使用接入 Token。
+Skill 不注册实例。`POLARIS_SERVICE_TOKEN` 与该只读场景无关，Skill RPC 使用
+`POLARIS_SKILL_TOKEN`；未设置时继承连接层的 `POLARIS_TOKEN`。
 
 ## 远端验证
 
@@ -53,23 +54,41 @@ POLARIS_SERVICE_TOKEN 是统一 E2E 脚本的前置参数，Skill RPC 使用接�
 
 ```bash
 export POLARIS_SERVER_ADDRESS=<host>:8091
-export POLARIS_SERVICE_TOKEN=<service-token>
-export POLARIS_SKILL_SERVER_ADDRESS=<host>:8094
-export POLARIS_SKILL_NAME=<已发布名称>
-export POLARIS_SKILL_NAMESPACE=default
 ./examples/verify_e2e.sh --only skill
 ```
 
-`POLARIS_SKILL_SERVER_ADDRESS` 和 `POLARIS_SKILL_NAME` 缺一不可，否则验证器在启动示例前就失败。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，Skill 连接使用 `POLARIS_TOKEN`。`POLARIS_SERVICE_TOKEN` 仍是脚本的前置参数，但这个场景不会拿它去注册实例。
+Skill 地址默认由 `POLARIS_SERVER_ADDRESS` 的主机和端口 `8094` 组成，可用
+`POLARIS_SKILL_SERVER_ADDRESS` 覆盖。`POLARIS_SKILL_NAME` 可省略，此时先调用只读
+`GetSkillList`，在 `POLARIS_SKILL_NAMESPACE` 中选择按名称排序的第一个已发布 Skill。
+未配置命名空间时：指定了 `POLARIS_SKILL_NAME` 则使用 `default`；未指定名称则沿用
+隔离的实例 E2E 命名空间（默认 `python-integration`），确保自动发现和 fixture 不进入
+共享命名空间。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，
+Skill 连接使用 `POLARIS_TOKEN`。`POLARIS_SERVICE_TOKEN` 与该只读场景无关。
+
+SDK 的 Skill gRPC 只提供 `GetSkill`、`GetSkillList` 和 `DownloadSkill`。当隔离
+命名空间内没有 Skill 时，E2E 验证器会通过商业版控制面
+`POST /skill/v1/skills` 创建 `publish=true` 的固定 fixture
+`polaris-python-e2e-skill-fixture`。验证器等待 8094 缓存可读后执行查询和下载；
+fixture 保留下来，后续运行优先检查并复用，不自动删除。
+
+实例 E2E 命名空间固定为 `python-integration`，不得把
+`POLARIS_E2E_NAMESPACE` 设为 `default`。Skill 资源使用独立的
+`POLARIS_SKILL_NAMESPACE`；未显式配置时，自动发现和 fixture 使用隔离的实例 E2E
+命名空间，只有指定了 `POLARIS_SKILL_NAME` 的只读场景才默认使用 `default`。不要把
+测试服务放进共享命名空间。
 
 步骤：
 
-1. 用 `POLARIS_SERVER_ADDRESS` 建发现连接，用 `POLARIS_SKILL_SERVER_ADDRESS` 建 Skill 连接。
-2. `get_skill` 读取指定命名空间和名称的 published 内容。
-3. `download_skill` 把该版本打成 ZIP 下载到本地。
-4. `list_skills` 按同一名称搜索，记录 `total`。
-5. 查询或下载的返回码不是 0 或 200000 时，示例抛出 “the requested published Skill was not found”。
+1. 用 `POLARIS_SERVER_ADDRESS` 建发现连接，Skill 地址默认推导为同一主机的 `8094`；
+   显式配置 `POLARIS_SKILL_SERVER_ADDRESS` 时优先使用该值。
+2. 未指定 `POLARIS_SKILL_NAME` 时先调用 `GetSkillList`，按名称排序选择第一个资源；
+   若没有资源，则通过控制面创建并保留隔离 fixture；指定名称时直接按该名称查询。
+3. `get_skill` 读取指定命名空间和名称的 published 内容。
+4. `download_skill` 把该版本打成 ZIP 下载到本地。
+5. `list_skills` 按同一名称搜索，记录 `total`。
+6. 查询或下载的返回码不是 0 或 200000 时，示例抛出 “the requested published Skill was not found”。
 
-通过条件是标准输出里有一行 JSON，且含 `zip_size`。验证器不检查 ZIP 内容、不对比离线用的 ns/lookup 分片，也不上传、发布或删除服务端 Skill。
+通过条件是标准输出里有一行 JSON，且含 `zip_size`。验证器不检查 ZIP 内容、不对比
+离线用的 ns/lookup 分片。首次运行会创建并发布固定 fixture，之后运行复用该资源。
 
 运行目录是 `.logs/verify-e2e-<时间>-<编号>/`。`skill.stdout.log` 是示例 JSON，`result.json` 的 `exit_code` 为 0 才通过。名称在服务端不存在时非零退出。

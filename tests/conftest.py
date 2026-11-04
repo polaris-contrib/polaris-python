@@ -19,6 +19,7 @@ import pytest
 
 from polaris.api import log
 from polaris.pkg.config import stat_reporter
+from polaris.pkg.flow.admin_server import AdminHttpServer
 from polaris.plugin.stat_reporter.prometheus import PrometheusReporter
 
 
@@ -40,6 +41,21 @@ def isolated_runtime(tmp_path, monkeypatch):
             admin.port = original_port
 
     monkeypatch.setattr(PrometheusReporter, "start", isolated_start)
+    original_admin_start = AdminHttpServer.start
+
+    async def isolated_admin_start(server):
+        admin = server.admin_config
+        original_host, original_port = admin.host, admin.port
+        if original_port == stat_reporter.DEFAULT_ADMIN_PORT or original_host == "0.0.0.0":
+            admin.host = "127.0.0.1"
+            if original_port is None or original_port == stat_reporter.DEFAULT_ADMIN_PORT:
+                admin.port = 0
+        try:
+            return await original_admin_start(server)
+        finally:
+            admin.host, admin.port = original_host, original_port
+
+    monkeypatch.setattr(AdminHttpServer, "start", isolated_admin_start)
     monkeypatch.setattr(log, "default_logger", None)
     monkeypatch.setattr(log, "_process_loggers", {})
     monkeypatch.setattr(log, "_process_log_paths", {})

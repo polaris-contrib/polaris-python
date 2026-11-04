@@ -51,6 +51,12 @@ class BaseEngine(object):
     async def async_get_instances(self):
         pass
 
+    def sync_get_services(self):
+        pass
+
+    async def async_get_services(self):
+        pass
+
     def sync_heartbeat(self, request: InstanceHeartbeatRequest) -> None:
         pass
 
@@ -61,5 +67,17 @@ class BaseEngine(object):
         pass
 
     def sync_get_service_rule(self, event_type: int, req: GetServiceRuleRequest) -> ServiceRuleResponse:
+        pass
+
+    def sync_lossless_register(self, request) -> None:
+        pass
+
+    async def async_lossless_register(self, request) -> None:
+        pass
+
+    def sync_lossless_deregister(self, request) -> None:
+        pass
+
+    async def async_lossless_deregister(self, request) -> None:
         pass
 

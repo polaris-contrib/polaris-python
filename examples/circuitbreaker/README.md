@@ -38,8 +38,9 @@ export POLARIS_SERVICE_TOKEN=
 ./consumer/run.sh --port 18080
 ```
 
-The caller is not registered. Provider `--host` is the advertised business address,
-independent of SDK `bindIP`.
+The caller is not registered. Provider defaults its advertised address to
+`get_local_host(POLARIS_SERVER_ADDRESS)`; an explicit `--host` overrides it. SDK `bindIP`
+is independent of the registered instance IP.
 
 Observe:
 

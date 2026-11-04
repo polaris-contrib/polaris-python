@@ -115,7 +115,7 @@ async def load_file_cache(engine, request):
             or response.service.namespace.value != request.namespace):
         logger.warning("ignore invalid file cache for %s/%s type %s", request.namespace, request.name, request.type)
         return None
-    logger.warning("use file cache %s", request.name)
+    logger.debug("use file cache namespace=%s service=%s", request.namespace, request.name)
     return response
 
 
@@ -127,6 +127,7 @@ class LocalCache(BaseLocalRegistry):
         self._cache_lock = threading.RLock()
         self.service_map: Dict[ServiceEventKey, CacheObject] = {}
         self.services: Dict[ServiceEventKey, bool] = {}
+        self._watch_counts: Dict[ServiceEventKey, int] = {}
         self._system_services = {
             (cluster.service_key.namespace, cluster.service_key.service)
             for cluster in get_server_services(self.config).values()
@@ -285,6 +286,12 @@ class LocalCache(BaseLocalRegistry):
         cache_obj.set_value(new_value)
         cache_obj.remote_updated = True
         self.services[service_key] = True
+        log_loaded = logger.info if old_value is None else logger.debug
+        log_loaded(
+            "cache snapshot loaded namespace=%s service=%s revision=%s instances=%d",
+            service_key.namespace, service_key.service,
+            new_value.revision, len(new_value.instances),
+        )
         self._publish_resource_event(
             SDKEventName.ON_SERVICE_ADDED if old_value is None else SDKEventName.ON_SERVICE_UPDATED,
             service_key, old_value, new_value,
@@ -360,8 +367,32 @@ class LocalCache(BaseLocalRegistry):
     def get_services(self):
         return self.services.copy()
 
+    def watch_service(self, namespace: str, service: str):
+        """Pin one instance resource so idle eviction does not remove it."""
+        service_key = ServiceEventKey(namespace, service, EventType.Instance)
+        with self._cache_lock:
+            self._watch_counts[service_key] = self._watch_counts.get(service_key, 0) + 1
+            cache_obj = self.service_map.get(service_key)
+            if cache_obj is not None:
+                cache_obj.get_value(True)
+
+    def unwatch_service(self, namespace: str, service: str):
+        """Release one watch reference; eviction starts from the release time."""
+        service_key = ServiceEventKey(namespace, service, EventType.Instance)
+        with self._cache_lock:
+            count = self._watch_counts.get(service_key, 0)
+            if count <= 1:
+                self._watch_counts.pop(service_key, None)
+            else:
+                self._watch_counts[service_key] = count - 1
+            cache_obj = self.service_map.get(service_key)
+            if cache_obj is not None:
+                cache_obj.last_visit_time = time.monotonic()
+
     def _is_expired(self, service_key, cache_obj, now):
         if cache_obj.invalid or cache_obj.loading:
+            return False
+        if self._watch_counts.get(service_key, 0) > 0:
             return False
         if (service_key.namespace, service_key.service) in self._system_services:
             return False

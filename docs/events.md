@@ -1,7 +1,8 @@
 # 事件中心
 
 每个 `SDKContext` 持有一个独立事件中心。事件中心只暴露当前 SDK 已实现能力的事件，
-不提供限流、无损上下线、配置中心、外部 watch 或远端治理规则事件。
+不提供限流、无损上下线、配置中心或远端治理规则事件。`watch_service()` 不新增事件类型，
+而是通过回调转发已有的 `OnServiceAdded` / `OnServiceUpdated` / `OnServiceDeleted`。
 
 ## 监听事件
 
@@ -72,3 +73,14 @@ info，失败为 warning。每行带该事件的本地日志正文，因此可�
 
 完整字段见 [配置参数说明](config/configuration-reference.md)。默认 `global.eventReporter.enable=false`，
 因此不会默认连接远端事件服务。
+
+## 真实服务端 E2E
+
+`examples/verify_e2e.sh` 会为所有真实场景创建的 Context 启用事件 Pushgateway。
+默认把 `POLARIS_SERVER_ADDRESS` 的 host 与端口 `9091` 组合成事件服务地址，并向
+`/polaris/client/events` 上报 Java 兼容事件。`circuitbreaker` 场景会真实触发
+`CircuitBreakerOpen`、`CircuitBreakerHalfOpen` 和 `CircuitBreakerClose`，同时在
+event 日志中断言三条事件均收到 Pushgateway 的 2xx 响应。
+
+示例 E2E 使用 `POLARIS_EVENT_REPORTER_ADDRESS` 等辅助变量应用配置；这些变量只在
+运行 demo 前由示例脚手架读取，不会改变普通程序中的代码配置优先级。

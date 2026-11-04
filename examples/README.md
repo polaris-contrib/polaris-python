@@ -67,7 +67,8 @@ It retains:
 - `console.log`
 - `verification.log`
 - `result.json`
-- SDK logs under `sdk/`
+- SDK category logs under `polaris/log/<component>/<category>/`
+- Local cache backups under `polaris/backup/<component>/`
 - runtime data under `work/` or `.runtime/`
 
 Inspect and clean:

@@ -86,6 +86,7 @@ class GrpcConnector(BaseServerConnector):
         self._idle_task = None
         self._request_slots = asyncio.Semaphore(connector_config.get_request_queue_size() + 1)
         self.logger = init_ctx.logger.get_logger("network") if init_ctx.logger is not None else None
+        self.base_logger = init_ctx.logger.get_logger("base") if init_ctx.logger is not None else None
 
     @asynccontextmanager
     async def _request_slot(self):
@@ -140,7 +141,7 @@ class GrpcConnector(BaseServerConnector):
                 if stream is not None:
                     await stream.aclose()
                 if self.logger is not None:
-                    self.logger.info("closed idle Discover stream %s", key)
+                    self.logger.debug("closed idle Discover stream %s", key)
 
     async def _stop_idle_cleanup(self):
         if self._idle_task is not None:
@@ -205,6 +206,20 @@ class GrpcConnector(BaseServerConnector):
             )
         ensure_response(response, (ServerCode.ExecuteSuccess, ServerCode.ExistedResource))
         instance_id = response.instance.id.value if response.HasField("instance") else ""
+        if self.logger is not None:
+            self.logger.info(
+                "instance registered namespace=%s service=%s host=%s port=%s instanceId=%s autoHeartbeat=%s",
+                request.namespace, request.service, request.host, request.port, instance_id,
+                request.auto_heartbeat,
+            )
+        if self.base_logger is not None:
+            metadata = dict(getattr(request, "metadata", {}) or {})
+            self.base_logger.info(
+                "registerInstance success namespace=%s service=%s host=%s port=%s "
+                "instanceId=%s metadataSize=%d metadataKeys=%s",
+                request.namespace, request.service, request.host, request.port, instance_id,
+                len(metadata), sorted(metadata),
+            )
         return InstanceRegisterResponse(instance_id)
 
     async def deregister_instance(self, request: InstanceDeRegisterRequest) -> None:
@@ -212,6 +227,16 @@ class GrpcConnector(BaseServerConnector):
         async with self._request_slot():
             response = await connection.deregister_instance(deregister_request_to_proto(request))
         ensure_response(response, (ServerCode.ExecuteSuccess, ServerCode.NotFoundResource))
+        if self.logger is not None:
+            self.logger.info(
+                "instance deregistered namespace=%s service=%s host=%s port=%s instanceId=%s",
+                request.namespace, request.service, request.host, request.port, request.instance_id,
+            )
+        if self.base_logger is not None:
+            self.base_logger.info(
+                "deregisterInstance success namespace=%s service=%s host=%s port=%s instanceId=%s",
+                request.namespace, request.service, request.host, request.port, request.instance_id,
+            )
 
     @staticmethod
     def _stream_key(request: InstanceDiscoverRequest) -> str:
@@ -239,6 +264,11 @@ class GrpcConnector(BaseServerConnector):
                 self._streams[key] = stream
                 self._stream_connections[key] = connection
                 self._stream_last_activity[key] = time.monotonic()
+                if self.logger is not None:
+                    self.logger.info(
+                        "Discover stream opened namespace=%s service=%s type=%s revision=%s",
+                        request.namespace, request.name, request.type, request.revision,
+                    )
             try:
                 async with self._request_slot():
                     response = await anext(stream)
@@ -247,6 +277,11 @@ class GrpcConnector(BaseServerConnector):
                 self._streams.pop(key, None)
                 self._stream_connections.pop(key, None)
                 self._stream_last_activity.pop(key, None)
+                if self.logger is not None:
+                    self.logger.warning(
+                        "Discover stream closed namespace=%s service=%s type=%s",
+                        request.namespace, request.name, request.type,
+                    )
                 raise SDKError(ErrorCode.ErrCodeNetworkError, f"Discover stream closed for {request.name}")
             except (asyncio.CancelledError, Exception):
                 self._streams.pop(key, None)
@@ -255,6 +290,12 @@ class GrpcConnector(BaseServerConnector):
                 await stream.aclose()
                 raise
         ensure_response(response)
+        if self.logger is not None:
+            self.logger.debug(
+                "Discover response namespace=%s service=%s type=%s revision=%s instances=%s",
+                request.namespace, request.name, request.type, response.service.revision.value,
+                len(response.instances),
+            )
         return response
 
     async def stop_discover(self, request: InstanceDiscoverRequest) -> None:
@@ -272,6 +313,11 @@ class GrpcConnector(BaseServerConnector):
                     await stream.aclose()
             finally:
                 self._stream_locks.pop(key, None)
+                if self.logger is not None:
+                    self.logger.info(
+                        "Discover stream stopped namespace=%s service=%s type=%s",
+                        request.namespace, request.name, request.type,
+                    )
 
     async def heartbeat(self, request: InstanceHeartbeatRequest) -> None:
         connection = await self._connection(heartbeat=True)

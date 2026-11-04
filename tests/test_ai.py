@@ -27,11 +27,13 @@ import pytest
 from polarismesh_specification.api.v1.service_manage import grpcapi_pb2_grpc, response_pb2, service_pb2
 from polarismesh_specification.api.v1.skill_manage import skill_service_pb2 as skill_pb, skill_service_pb2_grpc
 
-from polaris import Configuration, ConsumerAPI, Instance, ProviderAPI, SkillAPI, init_context_by_config
+from polaris import Configuration, ConsumerAPI, Instance, ProviderAPI, ServiceWatch, SkillAPI, init_context_by_config
 from polaris.pkg.model.contract import GetServiceContractRequest, ServiceContract, ServiceFeature, ServiceFeatureType
-from polaris.pkg.model.core import EventType
+from polaris.pkg.model.core import EventType, ServiceEventKey
+from polaris.pkg.model.event import SDKEventName, SDKEventType, now_event
 from polaris.pkg.model.error import ErrorCode, SDKError
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
+from polaris.pkg.model.rule import GetServiceRuleRequest
 from polaris.pkg.model.service import (GetAllInstancesRequest, GetHealthyInstancesRequest,
                                        GetInstancesRequest, GetOneInstanceRequest, ServiceInstances,
                                        ServiceStatus, ServiceType)
@@ -203,6 +205,89 @@ def test_snapshot_reuses_same_id_local_value_and_defaults_missing_weight():
     fresh = ServiceInstances.new_from_discover_rsp(response, old_instances=old)
     assert fresh.instances[0].get_local_value() is old.instances[0].get_local_value()
     assert fresh.instances[0].get_weight() == 100
+
+
+@pytest.mark.asyncio
+async def test_public_service_list_watch_filters_events_and_pins_cache(runtime):
+    stub, context, _ = runtime
+    stub.instances = [instance()]
+    consumer = ConsumerAPI(context)
+    request = GetInstancesRequest(namespace="ns", service="mcp")
+    snapshot = await consumer.async_get_all_instances(request)
+    assert len(snapshot.get_instances()) == 1
+    assert ServiceEventKey("ns", "mcp", EventType.Instance) in await consumer.async_get_services()
+
+    events = []
+    watch = await consumer.async_watch_service(request, events.append)
+    assert isinstance(watch, ServiceWatch)
+    cache_key = ServiceEventKey("ns", "mcp", EventType.Instance)
+    engine = context.get_engine()
+    cache_obj = engine.registry.service_map[cache_key]
+
+    async def expire():
+        cache_obj.last_visit_time -= 2 * 24 * 60 * 60
+        return await engine.registry.expire_services()
+
+    assert await engine._run_async(expire()) == []
+    assert engine.registry.service_map.get(cache_key) is cache_obj
+
+    event_center = context.get_event_center()
+    event_center.publish(now_event(
+        context.get_client_id(), SDKEventType.INSTANCE, SDKEventName.ON_SERVICE_UPDATED,
+        namespace="other", service="mcp",
+    ))
+    event_center.publish(now_event(
+        context.get_client_id(), SDKEventType.CIRCUIT_BREAKING,
+        SDKEventName.CIRCUIT_BREAKER_OPEN, namespace="ns", service="mcp",
+    ))
+    event_center.publish(now_event(
+        context.get_client_id(), SDKEventType.INSTANCE, SDKEventName.ON_SERVICE_UPDATED,
+        namespace="ns", service="mcp",
+    ))
+    assert len(events) == 1
+    assert events[0].event_name == SDKEventName.ON_SERVICE_UPDATED
+
+    watch.close()
+    assert watch._closed
+    assert await engine._run_async(expire()) == [cache_key]
+    assert engine.registry.service_map.get(cache_key) is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_unwatch_does_not_release_other_active_watch(runtime):
+    stub, context, _ = runtime
+    stub.instances = [instance()]
+    consumer = ConsumerAPI(context)
+    request = GetInstancesRequest(namespace="ns", service="mcp")
+    first = await consumer.async_watch_service(request)
+    second = await consumer.async_watch_service(request)
+    cache_key = ServiceEventKey("ns", "mcp", EventType.Instance)
+    engine = context.get_engine()
+
+    consumer.unwatch_service(first)
+    consumer.unwatch_service(first)
+    assert engine.registry._watch_counts[cache_key] == 1
+
+    async def expire():
+        cache_obj = engine.registry.service_map[cache_key]
+        cache_obj.last_visit_time -= 2 * 24 * 60 * 60
+        return await engine.registry.expire_services()
+
+    assert await engine._run_async(expire()) == []
+    assert engine.registry.service_map.get(cache_key) is not None
+
+    second.close()
+    second.close()
+    assert cache_key not in engine.registry._watch_counts
+    assert await engine._run_async(expire()) == [cache_key]
+
+
+def test_route_rule_sync_and_async_names_are_explicit(runtime):
+    _, context, _ = runtime
+    consumer = ConsumerAPI(context)
+    request = GetServiceRuleRequest(namespace="ns", service="mcp")
+    with pytest.raises(SDKError, match="only instance resources"):
+        consumer.get_route_rule(request)
 
 
 @pytest.mark.asyncio
@@ -395,6 +480,30 @@ async def test_skill_get_list_download_and_separate_connection(runtime):
     assert not context.is_destroy()
 
 
+def test_skill_java_compatible_response_aliases(runtime):
+    _, context, _ = runtime
+    api = SkillAPI(context)
+    skill = api.get_skill(SkillGetRequest("ns", "lookup"))
+    package = api.download_skill(SkillDownloadRequest("ns", "lookup", format="zip"))
+    assert skill.resource_version is skill.version
+    assert package.zip_content is package.data
+
+
+def test_skill_context_factory_close_and_context_manager_do_not_destroy_shared_context(runtime):
+    _, context, _ = runtime
+    from polaris import create_skill_by_context
+    api = create_skill_by_context(context)
+    api.close()
+    api.close()
+    assert api._closed
+    assert not context.is_destroy()
+
+    with create_skill_by_context(context) as scoped:
+        assert scoped.get_skill(SkillGetRequest("ns", "lookup")).content == "# lookup"
+    assert scoped._closed
+    assert not context.is_destroy()
+
+
 def test_skill_sync_reads_and_restart_network_fallback(runtime):
     stub, context, create = runtime
     api = SkillAPI(context)
@@ -516,6 +625,24 @@ def test_skill_file_factory_loads_polaris_yaml_and_owns_context(runtime, tmp_pat
     finally:
         api.destroy()
     assert api.context.is_destroy() and not context.is_destroy()
+
+
+def test_skill_default_config_file_factory_owns_context(runtime, tmp_path):
+    file = tmp_path / "polaris.yaml"
+    file.write_text(
+        "global:\n  api:\n    bindIP: 127.0.0.1\n"
+        "consumer:\n  localCache:\n    persistDir: " + str(tmp_path / "default-instances") + "\n"
+        "ai:\n  skill:\n    serverConnector:\n      addresses: [default-skill:8094]\n"
+        "      persistEnable: false\n"
+    )
+    from polaris import create_skill_by_default_config_file
+    api = create_skill_by_default_config_file()
+    try:
+        assert api.context.engine.skill_connector.connection.settings.addresses == ["default-skill:8094"]
+        assert api.get_skill(SkillGetRequest("ns", "lookup")).content == "# lookup"
+    finally:
+        api.close()
+    assert api.context.is_destroy()
 
 
 

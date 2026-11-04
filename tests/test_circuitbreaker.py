@@ -754,6 +754,7 @@ async def test_periodic_circuit_checks_only_instance_resources(circuit, monkeypa
     registry = Registry(node)
     cfg = Configuration()
     cfg.set_default()
+    cfg.get_consumer().get_circuit_breaker().check_period = 10000
     engine = impl.Engine(config=cfg, registry=registry, circuit_breaker_chain={"composite": cb})
     services = {ServiceEventKey("Test", "svc", kind): object()
                 for kind in (EventType.Instance, EventType.Routing)}

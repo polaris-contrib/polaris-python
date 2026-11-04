@@ -23,6 +23,7 @@ import pytest
 from google.protobuf import json_format
 from polarismesh_specification.api.v1.service_manage import response_pb2, service_pb2
 
+from polaris.api import log
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.context import ContextKeyEngine, new_value_context
 from polaris.pkg.model.core import EventType, ServiceEventKey
@@ -187,6 +188,30 @@ def test_file_cache_names_match_instance_files(tmp_path):
         cache.destroy()
 
 
+def test_file_cache_writes_diagnostics_to_context_cache_category(tmp_path):
+    context_log = log.ContextLogger("client", log.LogOptions(level="debug", log_dir=tmp_path / "logs"))
+    config = Configuration()
+    config.set_default()
+    init_context = InitContext(config=config, value_ctx=new_value_context())
+    init_context.logger = context_log
+    cache = filecache.LocalFileCache(init_ctx=init_context, base_dir=str(tmp_path / "backup"))
+    cache_log = context_log.get_logger("cache")
+    request = InstanceDiscoverRequest(1, "svc", "ns")
+    response = response_pb2.DiscoverResponse(code={"value": 200000})
+    try:
+        cache.save(request, response)
+        cache.queue.join()
+        assert cache.get(request) == response
+    finally:
+        cache.destroy()
+        context_log.close()
+    text = cache_log.file_path.read_text()
+    assert "cache backup initialized" in text
+    assert "cache backup written namespace=ns resource=svc type=1" in text
+    assert "cache backup loaded namespace=ns resource=svc type=1" in text
+    assert "cache backup writer stopped" in text
+
+
 def test_file_cache_destroy_drains_writes_and_is_idempotent(tmp_path):
     cache = filecache.LocalFileCache(base_dir=str(tmp_path))
     request = InstanceDiscoverRequest(1, "svc", "ns")
@@ -218,7 +243,10 @@ def test_file_cache_write_failure_releases_lock_and_allows_shutdown(tmp_path, mo
     cache = filecache.LocalFileCache(base_dir=str(tmp_path))
     cache.retry_interval = 0
     monkeypatch.setattr(cache, "logger", type("Logger", (), {
-        "error": lambda self, *args: errors.append(args), "warning": lambda self, *args: None,
+        "error": lambda self, *args: errors.append(args),
+        "warning": lambda self, *args: None,
+        "info": lambda self, *args: None,
+        "debug": lambda self, *args: None,
     })())
     request = InstanceDiscoverRequest(1, "svc", "ns")
     (tmp_path / "svc#ns#svc#instance.json").mkdir()

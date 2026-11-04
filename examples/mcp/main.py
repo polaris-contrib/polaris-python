@@ -29,7 +29,12 @@ from urllib.parse import urlunsplit
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import (
+    configure_e2e_event_reporting,
+    demo_backup_directory,
+    demo_log_options,
+    get_local_host,
+)
 from polaris import Configuration, ConsumerAPI, ProviderAPI, init_context_by_config
 from polaris.pkg.model.contract import (
     GetServiceContractRequest, ServiceContract, ServiceFeature, ServiceFeatureType,
@@ -118,8 +123,11 @@ def contract(args):
 
 def run(args):
     """Register, discover synchronously, read the contract, and deregister."""
+    if not args.host:
+        args.host = get_local_host(args.server.split(",", 1)[0].strip())
     config = Configuration()
     config.set_default()
+    configure_e2e_event_reporting(config)
     config.get_global().get_admin().port = 0
     config.get_global().get_api().bind_ip = "127.0.0.1"
     config.get_global().get_api().timeout = args.timeout
@@ -202,6 +210,8 @@ def run(args):
             "endpoint": endpoint(selected),
             "instances": [item.get_id() for item in snapshot.instances],
             "features": features,
+            "host": selected.get_host(),
+            "port": selected.get_port(),
         }
         print(json.dumps(result), flush=True)
         if args.keep_running:
@@ -226,7 +236,7 @@ def main(argv=None):
     parser.add_argument("--token", default=os.getenv("POLARIS_SERVICE_TOKEN", ""))
     parser.add_argument("--namespace", default=os.getenv("POLARIS_E2E_NAMESPACE", "python-integration"))
     parser.add_argument("--service", default="polaris-python-mcp")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", help="Advertised instance IP; defaults to the Polaris route source IP")
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--protocol", choices=MCP_PROTOCOLS, default="mcp-streamable-http")
     parser.add_argument("--protocol-version", default="2025-06-18")

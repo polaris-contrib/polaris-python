@@ -37,7 +37,8 @@ export POLARIS_SERVICE_TOKEN=
 ./consumer/run.sh --port 18080
 ```
 
-Caller 不注册。Provider 的 `--host` 是对外业务地址，与 SDK `bindIP` 独立。
+Caller 不注册。Provider 默认用 `get_local_host(POLARIS_SERVER_ADDRESS)` 作为业务注册
+地址；显式 `--host` 可覆盖，SDK `bindIP` 与注册 IP 独立。
 
 观察实例状态和恢复：
 

@@ -18,6 +18,8 @@ uv run pytest
 
 项目使用 `src` 布局。`uv sync` 会以可编辑方式安装 `src/polaris/`，源码修改立即生效。
 
+正式版本、开发包发布及安装方式见 [包发布说明](docs/releasing.md)。
+
 ## 配置
 
 ```yaml
@@ -87,8 +89,9 @@ response = provider.register_instance(InstanceRegisterRequest(
 ## Consumer
 
 每个 context 内复用 `ConsumerAPI`。同步入口包括 `get_one_instance()`、
-`get_instances()`、`get_all_instances()` 和 `get_healthy_instances()`，
-均提供对应 `async_` 方法。
+`get_instances()`、`get_all_instances()`、`get_healthy_instances()` 和
+`get_services()`；查询方法均有 `async_` 版本。`watch_service()` 固定已加载资源并转发
+缓存生命周期事件，`unwatch_service()` 解除固定。
 
 ```python
 from polaris.pkg.model.service import GetOneInstanceRequest
@@ -131,7 +134,7 @@ instance = consumer.get_one_instance(GetOneInstanceRequest(
 | 事件上报 | `pushgateway` |
 
 旧名称 `wr`、`err_count` 会规范化为 `weightedRandom`、`composite`。
-当前不拉取远端治理规则，也不启用主动健康探测。
+当前支持拉取远端无损规则；远端熔断、路由、限流和配置规则仍未启用，也不启用主动健康探测。
 
 ## 可观测性与安全
 

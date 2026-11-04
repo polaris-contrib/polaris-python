@@ -21,7 +21,12 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import (
+    configure_e2e_event_reporting,
+    demo_backup_directory,
+    demo_log_options,
+    get_local_host,
+)
 
 import argparse
 import json
@@ -141,15 +146,15 @@ def main(argv=None):
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--service", default="CircuitBreakerCallee")
     parser.add_argument("--service-token", default=os.getenv("POLARIS_SERVICE_TOKEN", ""))
-    parser.add_argument("--host", default="127.0.0.1", help="Explicit advertised business address")
+    parser.add_argument("--host", help="Explicit advertised business address; defaults to the Polaris route source IP")
     parser.add_argument("--listen-host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=18081)
     parser.add_argument("--status", type=int, default=200)
     parser.add_argument("--ttl", type=int, default=5)
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("polaris.yaml"))
     args = parser.parse_args(argv)
-    if not args.host or not args.namespace or not args.service:
-        parser.error("--host, --namespace and --service must not be empty")
+    if not args.namespace or not args.service:
+        parser.error("--namespace and --service must not be empty")
     if not 0 <= args.port <= 65535 or not 200 <= args.status <= 599 or not 0 < args.ttl <= 0xFFFFFFFF:
         parser.error("Invalid port, HTTP status or heartbeat TTL")
     if os.getenv("POLARIS_E2E") != "1":
@@ -159,6 +164,11 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     config = Configuration.from_file(str(args.config))
+    configure_e2e_event_reporting(config)
+    if not args.host:
+        args.host = get_local_host(config.get_global().get_server_connector().get_addresses()[0])
+    if not args.host:
+        parser.error("--host must not be empty")
     config.get_consumer().get_local_cache().persist_dir = str(
         demo_backup_directory(__file__, component="provider")
     )

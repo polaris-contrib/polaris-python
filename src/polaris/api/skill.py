@@ -130,6 +130,16 @@ class SkillAPI:
         if self._owns_context and self.context is not None:
             self.context.destroy()
 
+    def close(self):
+        """Java AutoCloseable-compatible alias for destroy()."""
+        self.destroy()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
 
 def create_skill_by_config(config, *, log_options=None):
     """Create a Skill API owning an independently configured context."""
@@ -139,3 +149,14 @@ def create_skill_by_config(config, *, log_options=None):
 def create_skill_by_file(path, *, log_options=None):
     """Create a Skill API owning a context loaded from polaris.yaml."""
     return SkillAPI(init_context_by_file(path, log_options=log_options), owns_context=True)
+
+
+def create_skill_by_context(context):
+    """Create a Skill API that shares a caller-owned SDK context."""
+    return SkillAPI(context)
+
+
+def create_skill_by_default_config_file(*, log_options=None):
+    """Create a Skill API from the default polaris.yaml or environment."""
+    from polaris.api.config import init_context
+    return SkillAPI(init_context(log_options=log_options), owns_context=True)

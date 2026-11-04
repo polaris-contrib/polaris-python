@@ -143,6 +143,11 @@ class SkillGetResponse:
     code: int = 200000
     info: str = ""
 
+    @property
+    def resource_version(self) -> SkillResourceVersion:
+        """Java-compatible name for the resolved version metadata."""
+        return self.version
+
 
 @dataclass
 class SkillListResponse:
@@ -167,3 +172,8 @@ class SkillDownloadResponse:
     loaded_from_file: bool = False
     code: int = 200000
     info: str = ""
+
+    @property
+    def zip_content(self) -> bytes:
+        """Java-compatible name for the assembled ZIP payload."""
+        return self.data

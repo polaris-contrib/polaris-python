@@ -68,6 +68,7 @@ export POLARIS_SERVICE_TOKEN=<service-token>
 - `events` 包含首次发现产生的 `OnServiceAdded`；
 - quickstart Provider 在验证期间保持运行。
 
-远端这一路验证真实注册、发现和事件订阅链路；实例更新、删除、熔断状态转换以及
-事件 Pushgateway 上报仍由离线验证覆盖。运行目录是
+远端这一路验证真实注册、发现和事件订阅链路。所有真实 E2E Context 都会启用事件
+Pushgateway；`OnServiceAdded` 本身只进入本地 event 日志，不进入远端批量上报。
+熔断事件上报由 `circuitbreaker` 远端场景验证。运行目录是
 `.logs/verify-e2e-<时间>-<编号>/`，demo JSON 保存在 `events.stdout.log`。

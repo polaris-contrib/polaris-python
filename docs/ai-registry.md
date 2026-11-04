@@ -16,6 +16,11 @@ MCP、A2A 和 Agent 框架适配不增加专用 SDK 依赖。
 `get_extended_metadata()`。默认不过滤 `OFFLINE` 服务；需要时设置
 `exclude_offline_service=True`。
 
+`get_services()` / `async_get_services()` 返回当前 context 已加载的
+`ServiceEventKey`。`watch_service()` / `async_watch_service()` 首次加载并固定服务，
+通过回调转发 `OnServiceAdded`、`OnServiceUpdated`、`OnServiceDeleted`；watched 服务不参与
+闲置淘汰。关闭返回的 `ServiceWatch` 或调用 `unwatch_service()` 后，从释放时间重新计算淘汰。
+
 首次发现等待远端；网络失败或超时后可使用磁盘备份。`400301` 会清理内存、
 Discover 和备份。相同 revision 保留当前快照，成功的空响应替换快照。
 
@@ -45,7 +50,8 @@ consumer.get_service_contract(request)
 ```
 
 契约上报失败不会回滚已注册实例。SDK 不自动生成 Tool、Resource 或 Prompt 定义，
-也不实现 MCP Client、`tools/list`、Tool 调用或协议过滤。
+也不实现 MCP Client、`tools/list`、Tool 调用或协议过滤；这些由 AgentScope/LangGraph
+扩展基于公开 Provider/Consumer/契约 API 实现。
 
 应用发现实例后，用 `host`、`port` 和 `mcp-endpoint-path` 自行构造 URL。
 IPv6 host 需要加方括号。
@@ -106,6 +112,17 @@ finally:
 
 均有 `async_` 形式。未找到资源 `400202` 作为结果返回，其他业务错误抛
 `SDKError`。SDK 不自动解压或执行下载内容。
+
+Skill 协议只提供 `GetSkill`、`GetSkillList` 和 `DownloadSkill`，SDK 不创建、发布、
+覆盖或删除 Skill。E2E 在未指定名称时可以自动发现已发布资源；命名空间为空时会通过
+商业版控制面 `POST /skill/v1/skills` 创建并发布固定夹具
+`polaris-python-e2e-skill-fixture`。该夹具会保留，后续 E2E 优先检查并复用。
+
+`SkillAPI` 支持 `destroy()`、`close()` 和 `with` 生命周期；`create_skill_by_context()`
+共享调用方 context，`create_skill_by_config()`、`create_skill_by_file()` 和
+`create_skill_by_default_config_file()` 创建并持有独立 context。为方便 Java 迁移，
+`SkillGetResponse.resource_version` 等价于 `version`，
+`SkillDownloadResponse.zip_content` 等价于 `data`。
 
 默认查询超时 5 秒，ZIP 下载超时 30 秒。请求自带 `timeout` 时优先。
 

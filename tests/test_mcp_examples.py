@@ -83,7 +83,8 @@ def runtime(monkeypatch, tmp_path):
 
 def run_example(*options):
     return demo.main(["--server", "offline:8091", "--namespace", "ns", "--service", "mcp",
-                      "--token", "token", "--timeout", "500", "--wait", "0", *options])
+                      "--host", "127.0.0.1", "--token", "token", "--timeout", "500",
+                      "--wait", "0", *options])
 
 
 def assert_destroyed(contexts):
@@ -101,7 +102,8 @@ def test_example_ordinary_provider_consumer_roundtrip(runtime, capsys, protocol,
     result = json.loads(capsys.readouterr().out)
     assert result == {"instance_id": "mcp-node", "instance_type": "Instance",
                       "endpoint": f"http://127.0.0.1:18080{path}", "instances": ["mcp-node"],
-                      "features": ["lookup", "document", "summarize"]}
+                      "features": ["lookup", "document", "summarize"],
+                      "host": "127.0.0.1", "port": 18080}
     methods = [method for method, _ in stub.calls]
     assert methods == ["register", "contract", "deregister"]
     registration = stub.calls[0][1]

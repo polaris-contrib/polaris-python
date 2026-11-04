@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import demo_backup_directory, demo_log_options
+from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
 
 import argparse
 import json
@@ -35,6 +35,7 @@ def create_configuration(server: str = "127.0.0.1:8091") -> Configuration:
     """Assign SDK configuration values directly; durations are integer milliseconds."""
     config = Configuration()
     config.set_default()
+    configure_e2e_event_reporting(config)
 
     global_config = config.get_global()
     connector = global_config.get_server_connector()

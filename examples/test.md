@@ -94,20 +94,55 @@
 
 ```bash
 export POLARIS_SERVER_ADDRESS=<host>:8091
-export POLARIS_SERVICE_TOKEN=<service-token>
-export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
+export POLARIS_SERVICE_TOKEN=<service-token>   # 服务级鉴权时才需要
+export POLARIS_E2E_SERVICE_TOKEN=<e2e-token>   # 可选，优先于上一行
+export POLARIS_TOKEN=<sdk-token>               # 连接层鉴权时才需要
 ./examples/verify_e2e.sh
 ./examples/verify_e2e.sh --only quickstart,monitoring
 ```
 
-`POLARIS_E2E_SERVICE_TOKEN` 与 `POLARIS_SERVICE_TOKEN` 等价。脚本自己设置 `POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES` 写成同一个地址。命名空间默认 `python-integration`，用 `POLARIS_E2E_NAMESPACE` 修改。监控推送把该主机端口改成 `9091`。Skill 另需 `POLARIS_SKILL_SERVER_ADDRESS`（通常是同一主机的 `8094`）和 `POLARIS_SKILL_NAME`。
+`POLARIS_SERVICE_TOKEN` 是注册、心跳和反注册请求携带的服务级令牌；服务未开启
+服务级鉴权时不需要设置，默认空字符串。`POLARIS_E2E_SERVICE_TOKEN` 是 E2E 脚手架
+使用的可选覆盖值，存在时优先于 `POLARIS_SERVICE_TOKEN`，便于测试凭据与实际服务
+凭据隔离。`POLARIS_TOKEN` 是连接注册中心的接入令牌，属于连接层鉴权，与前两者独立。
+三个令牌都未设置时分别使用空字符串。
+
+脚本自己设置 `POLARIS_E2E=1`，并把 `POLARIS_SERVER`、`POLARIS_SERVER_ADDRESSES`
+写成同一个地址。
+测试实例和测试服务固定进入 `python-integration`；`POLARIS_E2E_NAMESPACE` 只能覆盖为
+其他隔离命名空间，不能设为共享的 `default`。监控推送把该主机端口改成 `9091`。
+Skill 资源命名空间与实例命名空间相互独立。Skill 地址默认取注册中心主机与 `8094`
+端口，可用 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖。未配置
+`POLARIS_SKILL_NAMESPACE` 时：指定了 `POLARIS_SKILL_NAME` 则默认 `default`；
+未指定名称则自动发现和 fixture 使用隔离的实例 E2E 命名空间。`POLARIS_SKILL_NAME`
+可省略，此时验证器通过只读 `GetSkillList` 自动选择该命名空间内按名称排序的第一个
+已发布 Skill。若没有，则通过商业版
+Polaris 控制面的 `POST /skill/v1/skills` 创建并立即发布固定名称的
+`polaris-python-e2e-skill-fixture`。该资源会保留，后续 E2E 优先检查并复用。
+SDK 本身仍保持只读。
+控制面地址默认取同一主机的 `8090` 端口，可用 `POLARIS_CONSOLE_ADDRESS` 覆盖；
+管理请求令牌优先使用 `POLARIS_CONSOLE_TOKEN`，未设置时依次回退到
+`POLARIS_TOKEN` 和 service token。Skill fixture 不使用
+`cleanup.sh --delete-services` 清理。
+
+所有真实 E2E 场景创建的 Context 都会启用事件 Pushgateway，地址由
+`POLARIS_SERVER_ADDRESS` 的 host 加端口 `9091` 得到，上报路径为
+`/polaris/client/events`。各 demo 通过：
+
+- `POLARIS_EVENT_REPORTER_ENABLE=1`
+- `POLARIS_EVENT_REPORTER_ADDRESS=<host>:9091`
+- `POLARIS_EVENT_REPORTER_PUSH_INTERVAL=250`
+- `POLARIS_EVENT_REPORTER_MAX_RETRIES=3`
+- `POLARIS_EVENT_REPORTER_RETRY_INTERVAL=100`
+
+统一应用配置。`POLARIS_EVENT_REPORTER_*` 是示例 E2E 辅助变量，不是 SDK 自动配置变量。
 
 每个场景的运行目录是对应 demo 下的 `.logs/verify-e2e-<时间>-<编号>/`。`console.log` 含验证器 JSON，`result.json` 的 `exit_code` 为 0 才通过，`verification.log` 保存失败断言，`polaris/log/` 是探测 context 的 SDK 日志，demo 标准输出在 `<子目录名>.stdout.log`。
 
 | 场景 | 远端实际检查 |
 | --- | --- |
 | quickstart | 注册 TTL 1 秒的 HTTP Provider，Consumer `GET /echo` 返回 200 且正文含服务名。两个进程保持运行，不在验证器里反注册 |
-| circuitbreaker | 注册固定返回 200 的 Provider，Consumer `/echo` 为 200 且 `circuit_state=closed`，`/instances` 只有这一个实例。不制造失败，不检查半开 |
+| circuitbreaker | 注册 Provider 后真实触发失败、恢复：验证 `closed → open → half_open → closed`，并要求 Open、HalfOpen、Close 三个事件均成功上报到 `<host>:9091/polaris/client/events` |
 | sdkconfig/code、file | 各注册一个 Provider，再用对应配置发现它，断言第一个实例 ID 相同。不重跑离线的 YAML 矩阵 |
 | cache/expiry | 发现后按 5 秒闲置阈值等待并再次发现，前后实例 ID 相同。不关 Discover 流，不删磁盘备份 |
 | cache/restart | 发现一次并确认 `svc#命名空间#服务#*.json` 已写入。不模拟进程被杀或注册中心中断 |
@@ -115,9 +150,14 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 | servicerouter | 同样 4 次选择，输出含 Provider 的 host 和 port。不检查 metadata 路由矩阵 |
 | multicontext | 两个 context 注册两个实例，clientId 不同，销毁第一个后第二个仍可见。进程保持运行 |
 | mcp | 注册普通 Instance，契约含 lookup、document、summarize，进程保持运行 |
-| skill | 只查询并下载已发布 Skill，输出含 `zip_size`。不上传、不发布 |
+| skill | 查询并下载已发布 Skill；名称未提供时发现或创建并保留固定 fixture，后续运行优先复用，输出含 `zip_size` |
 | a2a | 注册 card metadata，发现结果 `transport` 为 `JSONRPC`，进程退出前反注册 |
 | monitoring | 本机 echo 三次调用 200、503、200，指标推到 `<host>:9091`，`calls=3` 且 `pushes>=1`，然后反注册 |
 | events | 注册唯一 Provider，再使用真实注册中心发现并断言 `OnServiceAdded`；Provider 保持运行 |
 
 需要先注册再发现的场景，用 quickstart Provider 注册，然后每 0.5 秒用不带缓存的发现探测，最多 20 秒。服务对象留在 Polaris 上。`./examples/cleanup.sh --force` 停止仍在运行的 demo 进程；`--delete-services` 只删除当前命名空间里 `polaris-python-e2e-` 前缀的服务。各场景的逐步说明在对应目录的 `test.md`。
+
+真实实例的注册 IP 统一通过 `get_local_host(POLARIS_SERVER_ADDRESS)` 获取，即本机
+连接到 Polaris 时 TCP socket 的源地址。验证器会把这个结果与 demo JSON、Provider
+输出和 multicontext 发现结果中的 `host` 逐一比较；离线 loopback stub 仍可使用
+`127.0.0.1`，因为它们不向真实注册中心发布实例。

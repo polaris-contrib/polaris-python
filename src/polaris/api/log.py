@@ -32,6 +32,7 @@ default_log_dir = "./polaris/log"
 default_log_path = f"{default_log_dir}/base/polaris.log"
 LOG_CATEGORIES = (
     "base", "network", "cache", "route", "circuitbreaker", "statReport", "event",
+    "lossless", "admin",
 )
 default_logger: logging.Logger | None = None
 _logger_lock = RLock()
