@@ -152,6 +152,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: Release
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Download verified distributions
         uses: actions/download-artifact@v4
@@ -161,9 +164,8 @@ jobs:
       - name: Publish package
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist/
           print-hash: true
+          attestations: true
           # Reruns keep the same run number and package version.
           skip-existing: true

@@ -264,8 +264,14 @@ Release 和 Snapshot workflow 还会执行：
 - 运行非 E2E 测试。
 - 只上传验证成功的产物。
 
-两条发布流水线共用 GitHub `Release` 环境中的 `PYPI_API_TOKEN`。该环境的分支保护
-和审核策略继续生效。
+两条发布流水线使用 GitHub `Release` 环境和 PyPI Trusted Publisher（OIDC）发布，
+publish job 需要 `id-token: write`，不再依赖 `PYPI_API_TOKEN`。该环境的分支保护和
+审核策略继续生效。
+
+PyPI 项目需要分别授权 `python-snapshot.yaml` 和 `release.yml` 两个 workflow，环境名
+均为 `Release`。如果项目尚未创建，可以先用 `python-snapshot.yaml` 的 pending
+publisher 完成首次发布；项目创建后，再把 `release.yml` 作为正式 publisher 添加到该项
+目。
 
 ## 8. 使用开发版本
 

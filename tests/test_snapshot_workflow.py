@@ -25,7 +25,9 @@ import pytest
 import yaml
 
 
-WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/python-snapshot.yaml"
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github/workflows/python-snapshot.yaml"
+RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 
 
 def workflow():
@@ -67,11 +69,26 @@ def test_snapshot_publish_only_uses_verified_artifacts():
     assert jobs["build"]["if"] == "${{ needs.check-snapshot.outputs.IS_SNAPSHOT == 'true' }}"
     assert jobs["publish"]["needs"] == "build"
     assert jobs["publish"]["environment"] == "Release"
+    assert jobs["publish"]["permissions"] == {"contents": "read", "id-token": "write"}
     upload = jobs["build"]["steps"][-1]
     download, publish = jobs["publish"]["steps"]
     assert upload["with"]["name"] == download["with"]["name"]
-    assert publish["with"]["password"] == "${{ secrets.PYPI_API_TOKEN }}"
+    assert "user" not in publish["with"]
+    assert "password" not in publish["with"]
+    assert publish["with"]["attestations"] == "true"
     assert publish["with"]["skip-existing"] == "true"
+
+
+def test_release_publish_uses_trusted_publishing():
+    config = yaml.load(RELEASE_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    publish = config["jobs"]["publish"]
+    assert publish["environment"] == "Release"
+    assert publish["permissions"] == {"contents": "read", "id-token": "write"}
+    step = next(step for step in publish["steps"]
+                if step.get("uses") == "pypa/gh-action-pypi-publish@release/v1")
+    assert "user" not in step["with"]
+    assert "password" not in step["with"]
+    assert step["with"]["attestations"] == "true"
 
 
 @pytest.mark.parametrize("configured, expected", [
