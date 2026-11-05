@@ -20,7 +20,7 @@ consumer:
     chain: [composite]
 ```
 
-完整说明见 [配置参数说明](config/configuration-reference.md)。
+完整说明见 [配置参数说明](../config/configuration-reference.md)。
 
 - `sleepWindow`：打开到半开的等待时间。
 - `successCountAfterHalfOpen`：关闭所需成功数，也是半开请求配额。
@@ -80,4 +80,4 @@ consumer.update_service_call_result(ServiceCallResult(
 uv run pytest -q tests/test_circuitbreaker.py -W error::RuntimeWarning
 ```
 
-示例说明见 [examples/circuitbreaker](../examples/circuitbreaker/README-zh.md)。
+示例说明见 [examples/circuitbreaker](../../examples/circuitbreaker/README-zh.md)。

@@ -31,4 +31,4 @@ SDK 会立即反注册实例，让消费端尽快从发现结果中移除它。
 
 服务端下发的 lossless 规则优先于 `polaris.yaml` 中的本地配置。
 `--service-token` 默认读取 `POLARIS_SERVICE_TOKEN`。完整配置见
-[docs/lossless.md](../../docs/lossless.md)。
+[docs/guides/lossless.md](../../docs/guides/lossless.md)。

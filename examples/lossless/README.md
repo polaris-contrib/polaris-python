@@ -33,4 +33,4 @@ The SDK deregisters the instance immediately so consumers can remove it from dis
 
 Server-declared lossless rules take precedence over the local values in `polaris.yaml`.
 `--service-token` defaults to `POLARIS_SERVICE_TOKEN`. See
-[docs/lossless.md](../../docs/lossless.md) for all options.
+[docs/guides/lossless.md](../../docs/guides/lossless.md) for all options.

@@ -27,4 +27,4 @@ configured interval. Real E2E verification checks that at least one push succeed
 An empty push address list discovers `Polaris/polaris.pushgateway`.
 Invocation reports use `async_update_service_call_result`; synchronous callers use
 `update_service_call_result`. No business request interception is automatic.
-See [observability](../../docs/observability.md) and [verification](test.md).
+See [observability](../../docs/guides/observability.md) and [verification](test.md).

@@ -20,4 +20,4 @@ POLARIS_E2E=1 make -C examples/events run \
 ```
 
 See [test.md](test.md) for the offline verification and
-[event documentation](../../docs/events.md) for listener APIs and event fields.
+[event documentation](../../docs/guides/events.md) for listener APIs and event fields.

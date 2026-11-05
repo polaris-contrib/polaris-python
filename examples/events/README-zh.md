@@ -17,4 +17,4 @@ POLARIS_E2E=1 make -C examples/events run \
 ```
 
 离线验证与事件序列见 [test.md](test.md)，监听接口和字段见
-[事件中心](../../docs/events.md)。
+[事件中心](../../docs/guides/events.md)。

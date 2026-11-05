@@ -106,7 +106,7 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 | `plugin.prometheus.pathRegexList` | `list[regex]` | `[]` | 按顺序完整匹配 method，以正则文本作为低基数标签。 |
 | `plugin.prometheus.overrideHost` | string | `""` | 覆盖上报 host 标签。 |
 
-详细行为见 [可观测性](../observability.md)。
+详细行为见 [可观测性](../guides/observability.md)。
 
 公有云部署当前优先使用 `chain: [pushgateway]` 和 `type: push`。
 自建环境可使用 Prometheus pull。
@@ -125,7 +125,7 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 | `lossless.healthCheckMethod` | string | `GET` | 预留，当前使用 GET。 |
 
 服务端下发的无损规则优先于本地配置；元数据规则按实例 metadata 匹配。详见
-[无损上下线](../lossless.md)。
+[无损上下线](../guides/lossless.md)。
 
 ## consumer.localCache
 
@@ -202,7 +202,7 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 | `chain` | `list[string]` | `[composite]` | 当前仅本地 composite；`err_count` 会规范化。 |
 | `plugin` | map | `{}` | [预留] 当前无参数。 |
 
-返回码 `500-599` 或 `-1` 计为失败。详见 [本地实例熔断](../circuitbreaker.md)。
+返回码 `500-599` 或 `-1` 计为失败。详见 [本地实例熔断](../guides/circuitbreaker.md)。
 
 ## consumer.weightAdjust
 
@@ -231,4 +231,4 @@ Prometheus push 仅在插件自身 namespace/service 未成对配置时使用监
 | `persistRetryInterval` | duration，>=0 | `500ms` | 磁盘重试间隔。 |
 | `fallbackToLocalCache` | bool | `true` | 网络错误时是否读取本地备份。 |
 
-Skill 行为见 [AI Registry](../ai-registry.md)，TLS 见 [TLS](../tls.md)。
+Skill 行为见 [AI Registry](../guides/ai-registry.md)，TLS 见 [TLS](../guides/tls.md)。

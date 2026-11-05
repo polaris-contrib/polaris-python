@@ -30,4 +30,4 @@ belong to this example, not a dedicated SDK MCP API. `--strict-compatible` rejec
 explicit incompatibility; the default only warns. SDK discovery uses ordinary routing.
 Context destruction does not implicitly deregister instances.
 See [test.md](test.md) for results and retained artifacts,
-and [AI registry APIs](../../docs/ai-registry.md) for the full API and lifecycle behavior.
+and [AI registry APIs](../../docs/guides/ai-registry.md) for the full API and lifecycle behavior.

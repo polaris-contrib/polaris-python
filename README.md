@@ -7,6 +7,8 @@ AI Registry resources, observability, and TLS.
 
 The distribution is `polaris-python`; import it as `polaris`.
 
+The categorized documentation index is [docs/README.md](docs/README.md).
+
 ## Install
 
 Requires Python 3.12+.
@@ -19,7 +21,7 @@ uv run pytest
 The project uses a `src` layout. `uv sync` installs `src/polaris/` in editable mode,
 so source changes take effect immediately.
 
-See [Package releases](docs/releasing.md) for release and development package publishing.
+See [Version and release](docs/project/version-release.md) for release and development package publishing.
 
 ## Configure
 
@@ -113,12 +115,12 @@ the examples and [configuration reference](docs/config/configuration-reference.m
 
 ## AI Registry
 
-- MCP and A2A use ordinary `Instance` registration and discovery.
+- MCP, A2A, and LangGraph use ordinary `Instance` registration and discovery.
 - Service contracts use `report_service_contract()` and `get_service_contract()`.
 - `SkillAPI` provides read-only get/list/download operations over an independent connector.
 - Skill downloads can fall back to versioned local backups after network errors.
 
-See [AI Registry APIs](docs/ai-registry.md) and:
+See [AI Registry APIs](docs/guides/ai-registry.md) and:
 
 - [MCP example](examples/mcp/README.md)
 - [A2A example](examples/a2a/README.md)
@@ -144,15 +146,15 @@ configuration rules remain disabled, and active health detection is not enabled.
 
 Public cloud currently uses Pushgateway as the default supported export path.
 Prometheus pull remains available for self-hosted or custom scraping setups.
-See [Observability](docs/observability.md).
+See [Observability](docs/guides/observability.md).
 
 Each context has an isolated event center for implemented instance-cache and local
 circuit-breaker events, with an optional Pushgateway reporter. See
-[Events](docs/events.md).
+[Events](docs/guides/events.md).
 
 The registry and Skill connectors support independent TLS and mTLS certificates.
 Invalid certificate configuration fails startup instead of falling back to plaintext.
-See [TLS](docs/tls.md).
+See [TLS](docs/guides/tls.md).
 
 ## Examples
 

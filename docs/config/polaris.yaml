@@ -5,7 +5,7 @@ global:
   serverConnector:
     addresses: [127.0.0.1:8091]
 
-# Lossless online/offline; see docs/lossless.md.
+# Lossless online/offline; see docs/guides/lossless.md.
 # provider:
 #   lossless:
 #     enable: true

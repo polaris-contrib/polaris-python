@@ -30,5 +30,5 @@ POLARIS_E2E=1 make -C examples/skill run \
   ARGS="--skill-server <host>:8094 --namespace default --name lookup"
 ```
 
-See [test.md](test.md) for checks and artifacts, and [AI registry APIs](../../docs/ai-registry.md)
+See [test.md](test.md) for checks and artifacts, and [AI registry APIs](../../docs/guides/ai-registry.md)
 for code configuration, version selection and fallback behavior.

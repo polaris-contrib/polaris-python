@@ -22,4 +22,4 @@ POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token 
 推送模式在配置的间隔后输出成功上报次数 `pushes`，真实验证要求至少成功一次。
 同步上报使用 `update_service_call_result`，异步使用 `async_update_service_call_result`。
 SDK 不自动拦截业务调用。参数和产物见 [test.md](test.md)，指标说明见
-[可观测性](../../docs/observability.md)。
+[可观测性](../../docs/guides/observability.md)。

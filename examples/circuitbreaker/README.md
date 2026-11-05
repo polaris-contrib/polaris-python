@@ -59,4 +59,4 @@ Provider controls are test-only and unauthenticated. Do not expose them publicly
 ./cleanup.sh --force
 ```
 
-See [local circuit behavior](../../docs/circuitbreaker.md).
+See [local circuit behavior](../../docs/guides/circuitbreaker.md).

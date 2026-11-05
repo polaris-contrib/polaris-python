@@ -57,4 +57,4 @@ curl 'http://127.0.0.1:18082/switch?openError=false'
 ./cleanup.sh --force
 ```
 
-规则说明见 [本地实例熔断](../../docs/circuitbreaker.md)。
+规则说明见 [本地实例熔断](../../docs/guides/circuitbreaker.md)。

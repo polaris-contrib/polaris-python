@@ -138,7 +138,7 @@ consumer.update_service_call_result(ServiceCallResult(
 ```
 
 异步入口为 `async_update_service_call_result()`。
-`instance_type` 支持 `microservice`、`mcp` 和 `a2a`。
+`instance_type` 支持 `microservice`、`mcp`、`a2a` 和 `langgraph`。
 
 ## 指标
 
@@ -153,5 +153,5 @@ consumer.update_service_call_result(ServiceCallResult(
 标签覆盖 callee、caller、method、instance type、结果码和用户 labels。
 缺失值为 `__NULL__`。高基数标签由应用控制。
 
-完整配置见 [configuration-reference.md](config/configuration-reference.md)，
-运行示例见 [examples/monitoring](../examples/monitoring/README-zh.md)。
+完整配置见 [configuration-reference.md](../config/configuration-reference.md)，
+运行示例见 [examples/monitoring](../../examples/monitoring/README-zh.md)。

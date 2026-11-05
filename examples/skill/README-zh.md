@@ -31,4 +31,4 @@ POLARIS_E2E=1 make -C examples/skill run \
 ```
 
 备份放在该次运行 polaris/backup/skills，实例备份在 polaris/backup/instances，日志放在同级 polaris/log/。
-详细判定见 [test.md](test.md)，公开配置和降级语义见 [AI registry](../../docs/ai-registry.md)。
+详细判定见 [test.md](test.md)，公开配置和降级语义见 [AI registry](../../docs/guides/ai-registry.md)。

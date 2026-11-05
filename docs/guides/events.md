@@ -71,7 +71,7 @@ info，失败为 warning。每行带该事件的本地日志正文，因此可�
 `maxRetries` / `retryInterval` 重试，最终失败丢弃该批，不影响 SDK 主流程。context
 销毁前会停止接收新事件并 flush 已接受事件。
 
-完整字段见 [配置参数说明](config/configuration-reference.md)。默认 `global.eventReporter.enable=false`，
+完整字段见 [配置参数说明](../config/configuration-reference.md)。默认 `global.eventReporter.enable=false`，
 因此不会默认连接远端事件服务。
 
 ## 真实服务端 E2E

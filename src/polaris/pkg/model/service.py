@@ -682,6 +682,7 @@ class InstanceType:
     MICROSERVICE = "microservice"
     MCP = "mcp"
     A2A = "a2a"
+    LANGGRAPH = "langgraph"
 
 
 class APICallResult:
@@ -778,7 +779,12 @@ class ServiceCallResult:
         if type(self.ret_status) is not int or self.ret_status not in RetStatus.descriptions:
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument,
                            "ServiceCallResult: invalid retStatus")
-        if self.instance_type not in (InstanceType.MICROSERVICE, InstanceType.MCP, InstanceType.A2A):
+        if self.instance_type not in (
+            InstanceType.MICROSERVICE,
+            InstanceType.MCP,
+            InstanceType.A2A,
+            InstanceType.LANGGRAPH,
+        ):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument, "ServiceCallResult: invalid instanceType")
         if self.delay is not None and (type(self.delay) is not int or self.delay < 0):
             raise SDKError(ErrorCode.ErrCodeAPIInvalidArgument, "ServiceCallResult: delay must be nonnegative ms")

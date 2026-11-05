@@ -1,7 +1,7 @@
 # AI Registry
 
 Python SDK 通过普通实例、服务契约和独立 Skill 连接支持 AI Registry。
-MCP、A2A 和 Agent 框架适配不增加专用 SDK 依赖。
+MCP、A2A、LangGraph 和 Agent 框架适配不增加专用 SDK 依赖。
 
 ## 实例快照
 
@@ -70,12 +70,27 @@ a2a.path
 AgentCard 的序列化、解析、兼容检查和端点调用由应用或扩展层完成。
 SDK 不提供 A2A Server、远程 AgentCard 获取或框架注册器。
 
+## LangGraph
+
+LangGraph Server 同样使用普通实例。扩展层可写入以下 metadata：
+
+```text
+langgraph.graph-id
+langgraph.path
+langgraph.protocol
+```
+
+`host`、`port` 指向已启动的 LangGraph Server，`langgraph.path` 是 server base
+path，`langgraph.protocol` 为 `http` 或 `https`。SDK 不依赖 LangGraph，也不包装
+`RemoteGraph`；注册、发现和调用上报由 `polaris-python-ai[langgraph]` 基于公开
+Provider/Consumer API 完成。
+
 ## 调用指标
 
 `ServiceCallResult` 可带：
 
 - `method`
-- `instance_type="mcp"` 或 `"a2a"`
+- `instance_type="mcp"`、`"a2a"` 或 `"langgraph"`
 - `caller_service`
 - `labels`
 
@@ -127,7 +142,7 @@ Skill 协议只提供 `GetSkill`、`GetSkillList` 和 `DownloadSkill`，SDK 不�
 默认查询超时 5 秒，ZIP 下载超时 30 秒。请求自带 `timeout` 时优先。
 
 配置位于 `ai.skill.serverConnector`。完整字段见
-[配置参数说明](config/configuration-reference.md)。Skill token 为空时可继承主注册中心 token。
+[配置参数说明](../config/configuration-reference.md)。Skill token 为空时可继承主注册中心 token。
 
 查询和下载成功后异步写入版本化备份。网络错误且
 `fallbackToLocalCache=true` 时读取同命名空间、名称、版本和格式的备份。

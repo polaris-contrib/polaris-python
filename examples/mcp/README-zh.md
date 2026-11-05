@@ -28,4 +28,4 @@ make -C examples/mcp run ARGS="--server <host>:8091 --service search-mcp --port 
 兼容检查、能力组装、URL 拼装和退出反注册都在示例层；SDK 发现仍使用普通路由。
 默认不兼容只告警，`--strict-compatible` 拒绝明确不兼容注册；发现检查失败仍继续注册。
 关闭前显式反注册并停止心跳，最后销毁自己的 context；销毁本身不会隐式反注册。
-详细判定和产物见 [test.md](test.md)，公开接口说明见 [AI registry](../../docs/ai-registry.md)。
+详细判定和产物见 [test.md](test.md)，公开接口说明见 [AI registry](../../docs/guides/ai-registry.md)。

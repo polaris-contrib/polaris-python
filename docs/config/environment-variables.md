@@ -157,6 +157,6 @@ options = LogOptions(
 ## 相关文档
 
 - [配置参数说明](configuration-reference.md)
-- [TLS](../tls.md)
-- [可观测性](../observability.md)
-- [本地熔断](../circuitbreaker.md)
+- [TLS](../guides/tls.md)
+- [可观测性](../guides/observability.md)
+- [本地熔断](../guides/circuitbreaker.md)

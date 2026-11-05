@@ -7,6 +7,8 @@
 
 发行包名为 `polaris-python`，导入名为 `polaris`。
 
+分类文档入口见 [docs/README.md](docs/README.md)。
+
 ## 安装
 
 要求 Python 3.12+。
@@ -18,7 +20,7 @@ uv run pytest
 
 项目使用 `src` 布局。`uv sync` 会以可编辑方式安装 `src/polaris/`，源码修改立即生效。
 
-正式版本、开发包发布及安装方式见 [包发布说明](docs/releasing.md)。
+正式版本、开发包发布及安装方式见 [版本与发布](docs/project/version-release.md)。
 
 ## 配置
 
@@ -115,7 +117,7 @@ instance = consumer.get_one_instance(GetOneInstanceRequest(
 - `SkillAPI` 通过独立连接提供只读查询、列表和下载。
 - Skill 网络失败时可按版本从本地备份降级。
 
-详见 [AI Registry API](docs/ai-registry.md)：
+详见 [AI Registry API](docs/guides/ai-registry.md)：
 
 - [MCP 示例](examples/mcp/README-zh.md)
 - [A2A 示例](examples/a2a/README-zh.md)
@@ -139,13 +141,13 @@ instance = consumer.get_one_instance(GetOneInstanceRequest(
 ## 可观测性与安全
 
 公有云当前默认支持 Pushgateway 主动推送；Prometheus pull 适用于自建或自定义抓取环境，
-见 [可观测性](docs/observability.md)。
+见 [可观测性](docs/guides/observability.md)。
 
 每个 context 有独立事件中心，仅暴露已实现的实例缓存和本地熔断事件，
-并支持可选 Pushgateway 事件上报，见 [事件中心](docs/events.md)。
+并支持可选 Pushgateway 事件上报，见 [事件中心](docs/guides/events.md)。
 
 注册中心连接和 Skill 连接分别支持 TLS / mTLS。证书配置错误会拒绝启动，
-不会降级为明文，见 [TLS](docs/tls.md)。
+不会降级为明文，见 [TLS](docs/guides/tls.md)。
 
 ## 示例
 

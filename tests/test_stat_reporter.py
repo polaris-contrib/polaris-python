@@ -26,7 +26,7 @@ from polaris import Configuration, ConsumerAPI, ProviderAPI, init_context_by_con
 from polaris.api import log
 from polaris.pkg.model.context import new_value_context
 from polaris.pkg.model.error import SDKError
-from polaris.pkg.model.service import RetStatus, ServiceCallResult, ServiceInfo
+from polaris.pkg.model.service import InstanceType, RetStatus, ServiceCallResult, ServiceInfo
 from polaris.pkg.model.service import Instance
 from polaris.pkg.model.server import InstanceRegisterRequest
 from polaris.plugin.stat_reporter.prometheus import PrometheusReporter, METRICS, NULL
@@ -76,6 +76,22 @@ def test_java_period_gauges_labels_regex_and_idle_cleanup():
     stats.aggregate()
     stats.aggregate()
     assert samples(stats.render())["upstream_rq_total"] == []
+
+
+@pytest.mark.parametrize("instance_type", [
+    InstanceType.MICROSERVICE,
+    InstanceType.MCP,
+    InstanceType.A2A,
+    InstanceType.LANGGRAPH,
+])
+def test_service_call_result_accepts_supported_instance_types(instance_type):
+    result = call(instance_type=instance_type)
+    result.validate()
+    stats = reporter()
+    stats.report(result)
+    stats.aggregate()
+    labels = samples(stats.render())["upstream_rq_total"][0].labels
+    assert labels["callee_instance_type"] == instance_type
 
 
 @pytest.mark.parametrize("status", list(RetStatus.descriptions))
