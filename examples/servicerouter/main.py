@@ -21,21 +21,18 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[2] / "src"), str(Path(__file__).resolve().parents[2])]
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
 import math
 import os
 
-from polaris.api.consumer import ConsumerAPI, create_consumer_by_config
+from polaris.api.consumer import create_consumer_by_config
 from polaris.api.log import LogLevel
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.error import SDKError
 from polaris.pkg.model.service import GetOneInstanceRequest, RetStatus, ServiceCallResult
-
-CONSUMER_INSTANCE = None
-
 
 def parse_metadata(items):
     metadata = {}
@@ -50,27 +47,23 @@ def parse_metadata(items):
 
 
 def get_api(mode, failover):
-    global CONSUMER_INSTANCE
-    if CONSUMER_INSTANCE is None:
-        config = Configuration()
-        config.set_default()
-        configure_e2e_event_reporting(config)
-        connector = config.get_global().get_server_connector()
-        connector.addresses = [os.getenv("POLARIS_SERVER", "127.0.0.1:8091")]
-        connector.token = os.getenv("POLARIS_TOKEN", "")
-        connector.connect_timeout = 2 * 1000
-        config.get_global().get_admin().port = 0
-        router = config.get_consumer().get_service_router()
-        if mode == "metadata":
-            router.chain = ["metadataRouter"]
-            router.plugin["metadataRouter"] = {"metadataFailOverType": failover}
-        config.get_consumer().get_local_cache().persist_dir = str(
-            demo_backup_directory(__file__, component=mode))
-        CONSUMER_INSTANCE = create_consumer_by_config(
-            config,
-            log_options=demo_log_options(__file__, level=LogLevel.Warn, component=mode),
-        )
-    return CONSUMER_INSTANCE
+    config = Configuration()
+    config.set_default()
+    connector = config.get_global().get_server_connector()
+    connector.addresses = [os.getenv("POLARIS_SERVER", "127.0.0.1:8091")]
+    connector.token = os.getenv("POLARIS_TOKEN", "")
+    connector.connect_timeout = 2 * 1000
+    config.get_global().get_admin().port = 0
+    router = config.get_consumer().get_service_router()
+    if mode == "metadata":
+        router.chain = ["metadataRouter"]
+        router.plugin["metadataRouter"] = {"metadataFailOverType": failover}
+    config.get_consumer().get_local_cache().persist_dir = str(
+        demo_backup_directory(__file__, component=mode))
+    return create_consumer_by_config(
+        config,
+        log_options=demo_log_options(__file__, level=LogLevel.Warn, component=mode),
+    )
 
 
 def make_request(namespace, service, metadata, failover):

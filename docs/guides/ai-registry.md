@@ -58,17 +58,41 @@ IPv6 host 需要加方括号。
 
 ## A2A
 
-A2A Agent 使用普通实例。推荐 metadata：
+A2A Agent 使用普通实例，一张实例级 AgentCard 对应一个注册实例：
+
+```text
+service           = AgentCard.name
+host              = 卡片全部 interface URL 中的同一个 IP
+port              = registration_port，默认 1
+instance.version  = AgentCard.version
+instance.protocol = ""
+```
+
+应用写入的业务 metadata 必须包含：
 
 ```text
 ai-agent-name
-a2a.agent.card
-a2a.transport
-a2a.path
+ai-agent-card
+ai-a2a-version
 ```
 
-AgentCard 的序列化、解析、兼容检查和端点调用由应用或扩展层完成。
-SDK 不提供 A2A Server、远程 AgentCard 获取或框架注册器。
+`ai-a2a-version` 是 AgentCard schema 版本，只能是 `0.3` 或 `1.0`，不是
+`supportedInterfaces[].protocolVersion`。`1.0` 卡片使用 `supportedInterfaces`；
+`0.3` 卡片使用顶层 `url`、`preferredTransport` 和 `additionalInterfaces`，其顶层
+`protocolVersion=0.3.0` 归一化为 metadata 值 `0.3`。
+
+实例发现结果还可能由注册中心追加 `region`、`zone`、`campus` 和 `version` 等系统
+metadata。调用方应校验必需业务 key，并拒绝未知业务 key 或旧版 `a2a.*` key；不能
+要求发现结果与注册请求的 metadata 完全相同。
+
+一张卡片内的所有 URL 必须使用同一个具体 IP。不同业务端口、path、scheme 和
+`protocolBinding` 都保留在卡片中，仍只注册一个实例。`registration_port` 只用于实例
+身份，不是 Agent 监听端口；同一 service、IP 和注册端口重复注册时覆盖为最新卡片。
+
+调用方必须从 AgentCard interface 获取真实 endpoint，不能使用
+`instance.host + instance.port` 拼装 A2A 地址。SDK 不提供 A2A Server、远程 AgentCard
+获取或框架注册器；AgentCard 的版本解析、单 IP 校验和原样序列化由应用或
+`polaris-python-ai` 完成。
 
 ## LangGraph
 
@@ -159,9 +183,10 @@ Skill 协议只提供 `GetSkill`、`GetSkillList` 和 `DownloadSkill`，SDK 不�
 ## 示例
 
 ```bash
-./examples/verify.sh --only mcp,skill,a2a,monitoring
-./examples/verify_e2e.sh --only mcp
-./examples/verify_e2e.sh --only skill
+./integration/verify.sh --only mcp,skill,a2a,monitoring
+./integration/verify_e2e.sh --only mcp
+./integration/verify_e2e.sh --only skill
 ```
 
-真实服务验证要求 `POLARIS_E2E=1`。
+真实服务验证由 `integration/verify_e2e.sh` 自动设置测试环境，不需要手动导出
+`POLARIS_E2E`。

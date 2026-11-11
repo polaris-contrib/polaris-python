@@ -76,11 +76,11 @@ info，失败为 warning。每行带该事件的本地日志正文，因此可�
 
 ## 真实服务端 E2E
 
-`examples/verify_e2e.sh` 会为所有真实场景创建的 Context 启用事件 Pushgateway。
+`integration/verify_e2e.sh` 会在测试 Fixture 创建的 Context 上启用事件 Pushgateway。
 默认把 `POLARIS_SERVER_ADDRESS` 的 host 与端口 `9091` 组合成事件服务地址，并向
 `/polaris/client/events` 上报 Java 兼容事件。`circuitbreaker` 场景会真实触发
 `CircuitBreakerOpen`、`CircuitBreakerHalfOpen` 和 `CircuitBreakerClose`，同时在
 event 日志中断言三条事件均收到 Pushgateway 的 2xx 响应。
 
-示例 E2E 使用 `POLARIS_EVENT_REPORTER_ADDRESS` 等辅助变量应用配置；这些变量只在
-运行 demo 前由示例脚手架读取，不会改变普通程序中的代码配置优先级。
+集成测试使用 `POLARIS_EVENT_REPORTER_ADDRESS` 等辅助变量应用测试配置；这些变量
+只在 `integration/` 的 Fixture 中读取，公开示例不依赖它们。

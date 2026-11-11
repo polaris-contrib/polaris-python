@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
@@ -54,12 +54,8 @@ def main():
     parser.add_argument("--persist-dir", type=Path,
                         default=demo_backup_directory(__file__, component="restart"))
     args = parser.parse_args()
-    if os.environ.get("POLARIS_E2E") != "1":
-        print("Set POLARIS_E2E=1 to connect to a registry, or run examples/cache/restart/verify.py locally.")
-        return 0
     config = Configuration.from_file(args.config) if args.config else Configuration.from_env()
     config.set_default()
-    configure_e2e_event_reporting(config)
     if args.metrics_port is not None:
         config.get_global().get_admin().port = args.metrics_port
     config.get_consumer().get_local_cache().persist_dir = str(args.persist_dir)

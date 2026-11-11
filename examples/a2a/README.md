@@ -6,23 +6,53 @@ This example uses ordinary Provider/Consumer APIs to register an already-running
 agent endpoint, discover its Instance and decode the JSON card carried in metadata.
 It does not provide an A2A SDK, fetch a remote AgentCard or invoke an agent.
 
-Run the offline verification:
+Register an existing endpoint explicitly from the repository root:
 
 ```bash
-./examples/verify.sh --only a2a
+POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
+  make -C examples run DEMO=a2a ARGS='--namespace default --card $PWD/examples/a2a/agent-card.json'
 ```
 
-Register an existing endpoint explicitly:
+One AgentCard registers one instance. The example uses the first advertised interface:
+`service` comes from `AgentCard.name`, `host` comes from that URL, `version` comes from
+`AgentCard.version`, and `protocol` is empty. The instance identity port defaults to
+`registration_port=1`; use `--registration-port` when separate versions need to coexist.
+
+Multi-port grouping, mixed-schema validation and peer-instance selection are integration
+fixture behavior and are not repeated in this example.
+
+The included `agent-card.json` is an A2A 1.0 card with two interfaces on
+`127.0.0.1`. Replace its URLs with the Agent's real IP and ports. Select a 0.3 legacy
+card explicitly with `--a2a-version 0.3`.
+
+Application metadata contains the required keys `ai-agent-name`, `ai-agent-card`, and
+`ai-a2a-version`. Discovery may also include server-managed `region`, `zone`, `campus`,
+and `version` keys.
+Callers discover the endpoint from the card interfaces, never from
+`instance.host:instance.port`. The SDK automatically heartbeats at TTL 5 seconds; the
+example explicitly deregisters before destroying its context after `--duration`
+(default 6 seconds). `--keep-running` waits for SIGINT/SIGTERM instead, which keeps
+the process and instance registered until cleanup. Context destruction alone does not
+deregister.
+
+## Logs And Cleanup
+
+From the repository root:
 
 ```bash
-POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
-  make -C examples/a2a run ARGS="--namespace default --service demo-agent --card agent-card.json"
+make -C examples logs ARGS='--only a2a --latest --tail 30'
+make -C examples cleanup ARGS='--only a2a --dry-run'
+make -C examples cleanup ARGS='--only a2a'
 ```
 
-Set host, port, transport, path and card to the actual endpoint. The SDK automatically
-heartbeats at TTL 5 seconds; the example explicitly deregisters before destroying its
-context after `--duration` (default 6 seconds). Context destruction alone does not deregister.
+Example logs live in this demo's `.logs/run-<timestamp>-<id>/`; direct
+`python main.py` runs use `.logs/manual/`. Cleanup confirms by default and only
+stops recorded demo PIDs and removes local generated artifacts. It does not delete
+remote services.
 
-Metadata uses `ai-agent-name`, `a2a.agent.card`, `a2a.transport` and `a2a.path`.
-The card JSON is application data, not a new SDK request model.
-Logs and backups remain in this demo's `.logs/` directory. See [test.md](test.md).
+## Verify
+
+From the repository root, run `./integration/verify.sh --only a2a`, or
+`./integration/verify_e2e.sh --only a2a` against a real registry. Test steps and
+integration test artifacts are documented in
+[integration/scenarios/a2a/test.md](../../integration/scenarios/a2a/test.md).

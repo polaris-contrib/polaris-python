@@ -1,0 +1,21 @@
+{
+  "name": "document-agent",
+  "description": "Document search agent",
+  "version": "1.0.0",
+  "supportedInterfaces": [
+    {
+      "url": "http://127.0.0.1:8080/a2a",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    },
+    {
+      "url": "http://127.0.0.1:8081/a2a/rest",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "capabilities": {"streaming": false},
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [{"id": "search", "name": "Search", "description": "Find documents", "tags": ["search"]}]
+}

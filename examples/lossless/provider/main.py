@@ -22,12 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import (
-    configure_e2e_event_reporting,
-    demo_backup_directory,
-    demo_log_options,
-    get_local_host,
-)
+from examples._support import demo_backup_directory, demo_log_options, get_local_host
 
 import argparse
 import asyncio
@@ -35,39 +30,20 @@ import json
 import os
 import signal
 
-from aiohttp import ClientSession, web
+from aiohttp import web
 
 from polaris import Configuration, create_provider_by_config
 from polaris.pkg.model.server import InstanceRegisterRequest
 
 
-async def run(args, stop=None, on_started=None):
+async def run(args):
     """Own the HTTP endpoint, delayed registration and lossless shutdown."""
-    stop = stop or asyncio.Event()
+    stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
-    async def echo(request):
-        request.app["calls"].append(request.headers.get("X-Request-ID", ""))
-        return web.json_response({
-            "host": request.app["host"], "port": request.app["port"],
-            "status": 200,
-        })
-
-    app = web.Application()
-    app["calls"] = []
-    app.router.add_get("/echo", echo)
-    app.router.add_get("/ready", lambda _: web.Response(text="ready"))
-    runner = web.AppRunner(app, access_log=None)
-    await runner.setup()
-    site = web.TCPSite(runner, args.listen_host, args.port)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-    app["port"] = port
-
     config = Configuration.from_file(str(args.config))
-    configure_e2e_event_reporting(config)
     config.get_global().get_admin().host = args.admin_host
     config.get_global().get_admin().port = args.admin_port
     config.get_consumer().get_local_cache().persist_dir = str(
@@ -75,33 +51,60 @@ async def run(args, stop=None, on_started=None):
     )
     if not args.host:
         args.host = get_local_host(config.get_global().get_server_connector().get_addresses()[0])
-    app["host"] = args.host
 
-    provider = create_provider_by_config(
-        config, log_options=demo_log_options(__file__, component="provider")
-    )
-    request = InstanceRegisterRequest(
-        service=args.service, service_token=args.service_token, namespace=args.namespace,
-        host=args.host, port=port, protocol="http", ttl=args.ttl,
-        auto_heartbeat=True, metadata={"version": args.version},
-    )
+    calls = []
+    endpoint = {"host": args.host, "port": args.port}
+
+    async def echo(request):
+        calls.append(request.headers.get("X-Request-ID", ""))
+        return web.json_response({
+            "host": endpoint["host"], "port": endpoint["port"],
+            "status": 200,
+        })
+
+    app = web.Application()
+    app.router.add_get("/echo", echo)
+    app.router.add_get("/ready", lambda _: web.Response(text="ready"))
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    site = web.TCPSite(runner, args.listen_host, args.port)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    endpoint["port"] = port
+    provider = None
     try:
+        provider = create_provider_by_config(
+            config, log_options=demo_log_options(__file__, component="provider")
+        )
+        request = InstanceRegisterRequest(
+            service=args.service, service_token=args.service_token, namespace=args.namespace,
+            host=args.host, port=port, protocol="http", ttl=args.ttl,
+            auto_heartbeat=True, metadata={"version": args.version},
+        )
         await provider.async_lossless_register(request)
         admin_port = provider.context.engine.admin_server.port
         started = {
-            "started": True, "host": args.host, "port": port, "admin_port": admin_port,
+            "started": True, "instance_id": request.instance_id,
+            "host": args.host, "port": port, "admin_port": admin_port,
             "readiness_url": f"http://{args.admin_host}:{admin_port}/readiness",
             "offline_url": f"http://{args.admin_host}:{admin_port}/offline",
         }
         print(json.dumps(started), flush=True)
-        if on_started is not None:
-            await on_started({**started, "http_calls": app["calls"]})
+        while not request.instance_id and not stop.is_set():
+            await asyncio.sleep(0.1)
+        if request.instance_id:
+            print(json.dumps({
+                **started,
+                "instance_id": request.instance_id,
+                "registered": True,
+            }), flush=True)
         await stop.wait()
         await provider.async_lossless_deregister(request)
         print(json.dumps({"deregistered": request.instance_id}), flush=True)
     finally:
         await runner.cleanup()
-        provider.destroy()
+        if provider is not None:
+            provider.destroy()
 
 
 def main(argv=None):
@@ -125,9 +128,6 @@ def main(argv=None):
         parser.error("ports must be in [0, 65535]")
     if not 0 < args.ttl <= 0xFFFFFFFF:
         parser.error("--ttl must be a positive uint32")
-    if os.getenv("POLARIS_E2E") != "1":
-        print(json.dumps({"skipped": True, "reason": "Set POLARIS_E2E=1 to connect to Polaris"}))
-        return 0
     return asyncio.run(run(args))
 
 

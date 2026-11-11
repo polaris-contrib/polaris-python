@@ -24,7 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 from polaris import Configuration, ConsumerAPI, SkillAPI, init_context_by_config
 from polaris.pkg.model.service import GetInstancesRequest
 from polaris.pkg.model.skill import SkillDownloadRequest, SkillGetRequest, SkillListRequest
@@ -34,7 +34,6 @@ def run(args):
     """Query metadata and fetch the requested published content and ZIP package."""
     config = Configuration()
     config.set_default()
-    configure_e2e_event_reporting(config)
     config.get_global().get_admin().port = 0
     config.get_global().get_api().bind_ip = "127.0.0.1"
     config.get_global().get_server_connector().addresses = args.server.split(",")
@@ -86,9 +85,6 @@ def main(argv=None):
     parser.add_argument("--mounted-service", default=os.getenv("POLARIS_MOUNTED_SERVICE", ""))
     parser.add_argument("--mounted-skill", default=os.getenv("POLARIS_MOUNTED_SKILL", ""))
     args = parser.parse_args(argv)
-    if os.getenv("POLARIS_E2E") != "1":
-        print("Set POLARIS_E2E=1 to run read-only Skill verification.")
-        return 0
     run(args)
     return 0
 

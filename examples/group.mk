@@ -1,26 +1,27 @@
-# Forward build, package, run, and clean to demo subdirectories.
-# A verify.py in this directory runs before the subdirectories.
-# The examples root sets VERIFY_COMMAND to run its own verify.sh instead.
+# Build and clean demo groups; select one child application to run.
 
 UV ?= uv
 ARGS ?=
 SUBDIRS ?=
+DEMO ?=
 
 REPO_ROOT := $(shell dir="$(CURDIR)"; while [ "$$dir" != "/" ] && [ ! -f "$$dir/pyproject.toml" ]; do dir=$$(dirname "$$dir"); done; printf '%s\n' "$$dir")
+EXAMPLES_PYTHON ?= $(if $(POLARIS_PYTHON),$(POLARIS_PYTHON),$(if $(wildcard $(REPO_ROOT)/.venv/bin/python),$(REPO_ROOT)/.venv/bin/python,$(UV) run --project "$(REPO_ROOT)" --locked python))
 
-.PHONY: build build-x86 package run verify clean
+.PHONY: build build-x86 package run logs cleanup clean
 
-build build-x86 package run clean:
+build build-x86 package clean:
 	@set -eu; for dir in $(SUBDIRS); do $(MAKE) -C "$(CURDIR)/$$dir" $@; done
 
-ifdef VERIFY_COMMAND
-verify:
-	$(VERIFY_COMMAND) $(ARGS)
-else
-verify:
-	@set -eu; \
-	if [ -f "$(CURDIR)/verify.py" ]; then \
-		cd "$(REPO_ROOT)" && $(UV) run --locked python "$(CURDIR)/verify.py"; \
-	fi; \
-	for dir in $(SUBDIRS); do $(MAKE) -C "$(CURDIR)/$$dir" verify; done
-endif
+run:
+	@test -n "$(DEMO)" || { echo 'set DEMO to a child example, such as DEMO=provider' >&2; exit 2; }
+	@$(EXAMPLES_PYTHON) "$(REPO_ROOT)/examples/_apps.py" run \
+		"$(CURDIR)/$(DEMO)" -- $(ARGS)
+
+logs:
+	@$(EXAMPLES_PYTHON) "$(REPO_ROOT)/examples/_apps.py" logs \
+		--directory "$(CURDIR)" $(ARGS)
+
+cleanup:
+	@$(EXAMPLES_PYTHON) "$(REPO_ROOT)/examples/_apps.py" cleanup \
+		--directory "$(CURDIR)" $(ARGS)

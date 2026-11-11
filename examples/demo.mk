@@ -7,12 +7,12 @@ DEMO_MAIN ?= main.py
 DEMO_NAME ?= $(notdir $(CURDIR))
 
 REPO_ROOT := $(shell dir="$(CURDIR)"; while [ "$$dir" != "/" ] && [ ! -f "$$dir/pyproject.toml" ]; do dir=$$(dirname "$$dir"); done; printf '%s\n' "$$dir")
+EXAMPLES_PYTHON ?= $(if $(POLARIS_PYTHON),$(POLARIS_PYTHON),$(if $(wildcard $(REPO_ROOT)/.venv/bin/python),$(REPO_ROOT)/.venv/bin/python,$(UV) run --project "$(REPO_ROOT)" --locked python))
 
-.PHONY: build build-x86 package run verify clean
+.PHONY: build build-x86 package run logs cleanup clean
 
 build:
-	@uv_bin=$$(command -v $(UV)); \
-	printf '%s\n' \
+	@printf '%s\n' \
 		'#!/bin/sh' \
 		'set -eu' \
 		'HERE=$$(CDPATH= cd -- "$$(dirname "$$0")" && pwd)' \
@@ -25,7 +25,7 @@ build:
 		'  exit 1' \
 		'fi' \
 		'cd "$$ROOT"' \
-		"exec $$uv_bin run --locked python \"\$$HERE/$(DEMO_MAIN)\" \"\$$@\"" \
+		'exec '"$(EXAMPLES_PYTHON)"' "$$ROOT/examples/_apps.py" run --entry '"$(DEMO_MAIN)"' "$$HERE" -- "$$@"' \
 		> "$(CURDIR)/bin"
 	@chmod +x "$(CURDIR)/bin"
 	@echo "built $(CURDIR)/bin"
@@ -51,7 +51,6 @@ package: build
 	for file in "$(CURDIR)"/*.py "$(CURDIR)"/*.yaml; do \
 		[ -f "$$file" ] || continue; \
 		name=$$(basename "$$file"); \
-		[ "$$name" = "verify.py" ] && continue; \
 		cp "$$file" "$$stage/$$name"; \
 	done; \
 	tar -czf "$(CURDIR)/.build/$(DEMO_NAME).tar.gz" -C "$$stage" .; \
@@ -61,12 +60,13 @@ package: build
 run: build
 	"$(CURDIR)/bin" $(ARGS)
 
-verify:
-	@if [ -f "$(CURDIR)/verify.py" ]; then \
-		cd "$(REPO_ROOT)" && $(UV) run --locked python "$(CURDIR)/verify.py"; \
-	else \
-		echo "skip verify: $(CURDIR)"; \
-	fi
+logs:
+	@$(EXAMPLES_PYTHON) "$(REPO_ROOT)/examples/_apps.py" logs \
+		--directory "$(CURDIR)" $(ARGS)
+
+cleanup:
+	@$(EXAMPLES_PYTHON) "$(REPO_ROOT)/examples/_apps.py" cleanup \
+		--directory "$(CURDIR)" $(ARGS)
 
 clean:
 	rm -f "$(CURDIR)/bin" "$(CURDIR)/x86-bin" "$(CURDIR)/polaris.log"

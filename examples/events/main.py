@@ -25,7 +25,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 from polaris import Configuration, ConsumerAPI, SDKEventType, init_context_by_config
 from polaris.pkg.model.service import GetInstancesRequest
 
@@ -34,7 +34,6 @@ def run(args):
     """Discover one service and print the resource events emitted by the local cache."""
     config = Configuration()
     config.set_default()
-    configure_e2e_event_reporting(config)
     config.get_global().get_server_connector().addresses = args.server.split(",")
     config.get_global().get_server_connector().token = os.getenv("POLARIS_TOKEN", "")
     config.get_global().get_admin().port = args.metrics_port
@@ -60,9 +59,6 @@ def main(argv=None):
     parser.add_argument("--service", default="DiscoverEchoServer")
     parser.add_argument("--metrics-port", type=int, default=0)
     args = parser.parse_args(argv)
-    if os.getenv("POLARIS_E2E") != "1":
-        print("Set POLARIS_E2E=1 to run the event example.")
-        return 0
     run(args)
     return 0
 

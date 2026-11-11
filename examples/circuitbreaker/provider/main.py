@@ -21,12 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import (
-    configure_e2e_event_reporting,
-    demo_backup_directory,
-    demo_log_options,
-    get_local_host,
-)
+from examples._support import demo_backup_directory, demo_log_options, get_local_host
 
 import argparse
 import json
@@ -157,14 +152,10 @@ def main(argv=None):
         parser.error("--namespace and --service must not be empty")
     if not 0 <= args.port <= 65535 or not 200 <= args.status <= 599 or not 0 < args.ttl <= 0xFFFFFFFF:
         parser.error("Invalid port, HTTP status or heartbeat TTL")
-    if os.getenv("POLARIS_E2E") != "1":
-        print(json.dumps({"skipped": True, "reason": "Set POLARIS_E2E=1 to connect to Polaris"}))
-        return 0
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     config = Configuration.from_file(str(args.config))
-    configure_e2e_event_reporting(config)
     if not args.host:
         args.host = get_local_host(config.get_global().get_server_connector().get_addresses()[0])
     if not args.host:

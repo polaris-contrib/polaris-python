@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[2] / "src"), str(Path(__file__).resolve().parents[2])]
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
@@ -30,7 +30,7 @@ import os
 import signal
 import threading
 
-from examples._internal._runtime import get_local_host
+from examples._support import get_local_host
 from polaris import Configuration, ConsumerAPI, ProviderAPI, SDKError, init_context_by_config
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import GetInstancesRequest
@@ -40,7 +40,6 @@ def create_client(name, address, token, work_dir, level):
     """Assign configuration directly and give this client its own cache and log directory."""
     config = Configuration()
     config.set_default()
-    configure_e2e_event_reporting(config)
     config.get_global().get_server_connector().addresses = [address]
     config.get_global().get_server_connector().token = token
     config.get_global().get_api().bind_ip = "127.0.0.1"
@@ -51,8 +50,10 @@ def create_client(name, address, token, work_dir, level):
 
 async def discover(consumer, namespace, service):
     """Fetch a nonempty service snapshot within a bounded timeout."""
+    timeout = int(os.getenv("POLARIS_API_TIMEOUT", "5000"))
     result = await asyncio.wait_for(consumer.async_get_instances(GetInstancesRequest(
-        namespace=namespace, service=service, timeout=5000, use_discover_cache=False)), timeout=6)
+        namespace=namespace, service=service, timeout=timeout, use_discover_cache=False)),
+        timeout=timeout / 1000 + 5)
     nodes = result.get_instances()
     if not nodes:
         raise RuntimeError(f"No instances found for {namespace}/{service}")
@@ -61,8 +62,9 @@ async def discover(consumer, namespace, service):
 
 def sync_discover(consumer, namespace, service):
     """Run the synchronous discovery API outside the active asyncio loop."""
+    timeout = int(os.getenv("POLARIS_API_TIMEOUT", "5000"))
     result = consumer.get_instances(GetInstancesRequest(
-        namespace=namespace, service=service, timeout=5000, use_discover_cache=False,
+        namespace=namespace, service=service, timeout=timeout, use_discover_cache=False,
     ))
     return [{"id": node.get_id(), "host": node.get_host(), "port": node.get_port()}
             for node in result.get_instances()]
@@ -144,9 +146,6 @@ def main() -> int:
     args = parser.parse_args()
     if args.ttl <= 0 or args.seconds <= args.ttl:
         parser.error("--ttl must be positive and --seconds must exceed --ttl")
-    if os.getenv("POLARIS_E2E") != "1":
-        print(json.dumps({"skipped": True, "reason": "Set POLARIS_E2E=1 to connect to the configured registries"}))
-        return 0
     try:
         asyncio.run(run(args))
         return 0

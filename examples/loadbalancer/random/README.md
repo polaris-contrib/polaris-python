@@ -9,15 +9,13 @@
 ```bash
 export POLARIS_SERVER=127.0.0.1:8091
 export POLARIS_TOKEN=
-uv run --locked python examples/loadbalancer/random/main.py \
-  <namespace> <service> <times>
+make -C examples run DEMO=loadbalancer/random ARGS='<namespace> <service> <times>'
 ```
 
 例如：
 
 ```bash
-uv run --locked python examples/loadbalancer/random/main.py \
-  default demo 3
+make -C examples run DEMO=loadbalancer/random ARGS='default demo 3'
 ```
 
 `<times>` 是每一轮的选择次数。示例先做异步选择，每次打印 `host` 和 `port`，上报一次成功
@@ -25,23 +23,24 @@ uv run --locked python examples/loadbalancer/random/main.py \
 `use sync method`，再做相同次数的同步选择并上报结果。没有可用实例时退出，结束时销毁
 Consumer。
 
-## 验证、日志和清理
+## 日志与清理
 
-离线验证使用实际的 `random` 插件，替换注册中心 RPC。两个实例使用不同权重，验证器固定
-随机索引序列，确认异步和同步各选择 40 次、两个实例各被选择 20 次，并检查每次选择都上报
-一次结果，退出时 context、线程和日志句柄均已关闭。
-
-在本目录可以直接执行以下脚本；从仓库根目录按相应路径执行同样有效。
+从仓库根目录执行：
 
 ```bash
-./examples/verify.sh --only loadbalancer/random
-make -C examples/loadbalancer/random run ARGS="--help"
-./examples/logs.sh --latest --tail 30
-./examples/logs.sh --latest --category network --tail 30
-./examples/cleanup.sh --dry-run
-./examples/cleanup.sh --force
+make -C examples logs ARGS='--only loadbalancer/random --latest --tail 30'
+make -C examples logs ARGS='--only loadbalancer/random --latest --category network --follow'
+make -C examples cleanup ARGS='--only loadbalancer/random --dry-run'
+make -C examples cleanup ARGS='--only loadbalancer/random'
 ```
 
-`verify.sh` 验证当前场景；父目录 `loadbalancer` 依次验证 `random` 和 `wr`。
-每次执行保留独立的 `.logs/` 目录、控制台输出、SDK 分类日志和结果。
+示例输出和 SDK 日志保存在本目录 `.logs/run-<时间>-<id>/`，直接执行 `python main.py`
+时使用 `.logs/manual/`。本目录 `make run ARGS='default demo 3'` 使用同一运行脚本。
+默认清理先展示并确认，只停止记录的示例 PID 并清除本地生成产物，不删除远端服务。
 完整运行和清理规则见[示例总览](../../README-zh.md)。
+
+## 集成验证
+
+从仓库根目录执行 `./integration/verify.sh --only loadbalancer/random`；真实验证使用
+`./integration/verify_e2e.sh --only loadbalancer/random`。测试步骤和集成测试产物见
+[integration/scenarios/loadbalancer/random/test.md](../../../integration/scenarios/loadbalancer/random/test.md)。

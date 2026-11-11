@@ -57,7 +57,8 @@ POLARIS_SERVER_ADDRESSES > POLARIS_SERVER_ADDRESS > POLARIS_SERVER
 非法整数或布尔值会抛出 `SDKError`。
 
 `POLARIS_NAMESPACE`、`POLARIS_STAT_REPORTER_ADDRESSES` 不是 SDK 配置变量。
-示例使用的 `POLARIS_E2E`、`POLARIS_SKILL_*` 等由示例脚本读取。
+`POLARIS_E2E` 及 `POLARIS_E2E_*` 只由 `integration/` 测试 Fixture 读取；公开示例
+不使用这些测试开关。`POLARIS_SKILL_*` 由 Skill 示例读取，不是自动 SDK 配置项。
 
 ## 占位符
 
@@ -99,7 +100,7 @@ Skill 配置位于 `ai.skill.serverConnector`，没有专用环境覆盖变量�
 
 ## 示例 E2E 令牌
 
-以下变量由 `examples/verify_e2e.sh` 使用：
+以下变量由 `integration/verify_e2e.sh` 使用：
 
 | 变量 | 作用 | 是否必填 |
 | --- | --- | --- |
