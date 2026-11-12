@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
 import time
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 import grpc
+from google.protobuf.json_format import MessageToJson
 from google.protobuf.message import Message
 from polarismesh_specification.api.v1.service_manage import (
     client_pb2,
@@ -53,6 +55,7 @@ _REQUEST_ID_PREFIX = {
     "DownloadSkill": "1",
 }
 _REQUEST_ID_SEEDS = {prefix: itertools.count(1) for prefix in set(_REQUEST_ID_PREFIX.values())}
+REPORT_CLIENT_LOG_INTERVAL_SECONDS = 30 * 60
 
 
 def _request_id(method: str) -> tuple[tuple[str, str], ...]:
@@ -70,6 +73,32 @@ def _response_location(response) -> str:
     except (AttributeError, ValueError):
         pass
     return "-"
+
+
+def _report_client_request_summary(request) -> str:
+    try:
+        client_type = client_pb2.Client.ClientType.Name(request.type)
+    except ValueError:
+        client_type = str(request.type)
+    config_metadata = request.config_metadata.value if request.HasField("config_metadata") else ""
+    config_enabled = request.config_enabled.value if request.HasField("config_enabled") else False
+    stats = [
+        (
+            f"{stat.protocol.value or '-'}://{stat.target.value or '-'}:"
+            f"{stat.port.value}{stat.path.value or '/'}"
+        )
+        for stat in request.stat
+    ]
+    return (
+        f"clientId={request.id.value} host={request.host.value} "
+        f"clientType={client_type} clientVersion={request.version.value} "
+        f"configEnabled={config_enabled} configMetadataLen={len(config_metadata)} "
+        f"stats={','.join(stats) or '-'}"
+    )
+
+
+def _compact_message_json(message: Message) -> str:
+    return MessageToJson(message, preserving_proto_field_name=True, indent=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +144,25 @@ class GrpcConnection:
         self.address_resolver = None
         self.on_switch = None
         self._switch_task = None
+        self._last_report_client_log = None
+        self._last_report_client_log_at = None
+
+    def _should_log_report_client(self, request) -> bool:
+        content = request.SerializeToString(deterministic=True)
+        now = time.monotonic()
+        if (
+            content == self._last_report_client_log
+            and self._last_report_client_log_at is not None
+            and now - self._last_report_client_log_at < REPORT_CLIENT_LOG_INTERVAL_SECONDS
+        ):
+            return False
+        self._last_report_client_log = content
+        self._last_report_client_log_at = now
+        return True
+
+    def _reset_report_client_log(self) -> None:
+        self._last_report_client_log = None
+        self._last_report_client_log_at = None
 
     def _metadata(self) -> tuple[tuple[str, str], ...]:
         if not self.settings.token:
@@ -160,29 +208,68 @@ class GrpcConnection:
             address = self._addresses[self._address_index % len(self._addresses)]
             started = time.monotonic()
             response = None
+            request_metadata = _request_id(method) + extra_metadata + self._metadata()
+            request_id = next(
+                (value for key, value in request_metadata if key == "request-id"),
+                "-",
+            )
             try:
+                if method == "ReportClient" and self.base_logger.isEnabledFor(logging.DEBUG):
+                    self.base_logger.debug(
+                        "reportClient request address=%s requestId=%s request=%s",
+                        address,
+                        request_id,
+                        _compact_message_json(request),
+                    )
                 stub = await self._rpc_stub(method, address)
                 rpc: Callable[..., Awaitable[response_pb2.Response]] = getattr(stub, method)
                 response = await rpc(
                     request,
                     timeout=self.settings.timeout_seconds if timeout_seconds is None else timeout_seconds,
-                    metadata=_request_id(method) + extra_metadata + self._metadata(),
+                    metadata=request_metadata,
                 )
                 code = response_code(response)
                 cost = (time.monotonic() - started) * 1000
                 if method == "ReportClient":
+                    summary = _report_client_request_summary(request)
                     if code == ServerCode.ExecuteSuccess:
-                        self.base_logger.info(
-                            "reportClient success address=%s serverCode=%s cost=%.3fms location=%s",
-                            address, code, cost, _response_location(response),
-                        )
+                        if self._should_log_report_client(request):
+                            self.base_logger.info(
+                                "reportClient success address=%s serverCode=%s cost=%.3fms "
+                                "location=%s requestId=%s %s",
+                                address,
+                                code,
+                                cost,
+                                _response_location(response),
+                                request_id,
+                                summary,
+                            )
                     else:
+                        self._reset_report_client_log()
                         self.base_logger.warning(
-                            "reportClient failed address=%s serverCode=%s cost=%.3fms location=%s",
-                            address, code, cost, _response_location(response),
+                            "reportClient failed address=%s serverCode=%s cost=%.3fms "
+                            "location=%s requestId=%s %s",
+                            address,
+                            code,
+                            cost,
+                            _response_location(response),
+                            request_id,
+                            summary,
                         )
-                    self.logger.debug("Polaris ReportClient success address=%s code=%s cost=%.3fms",
-                                      address, code, cost)
+                    if self.base_logger.isEnabledFor(logging.DEBUG):
+                        self.base_logger.debug(
+                            "reportClient response address=%s requestId=%s response=%s",
+                            address,
+                            request_id,
+                            _compact_message_json(response),
+                        )
+                    self.logger.debug(
+                        "Polaris ReportClient success address=%s code=%s requestId=%s %s",
+                        address,
+                        code,
+                        request_id,
+                        summary,
+                    )
                 else:
                     # Heartbeats repeat on every TTL; keep them out of the INFO stream like polaris-go.
                     quiet_methods = {"Heartbeat", "GetServiceContract"}
@@ -196,12 +283,28 @@ class GrpcConnection:
                 last_error = exc
                 cost = (time.monotonic() - started) * 1000
                 if method == "ReportClient":
+                    summary = _report_client_request_summary(request)
+                    self._reset_report_client_log()
                     self.base_logger.warning(
-                        "reportClient failed address=%s code=%s cost=%.3fms: %s",
-                        address, exc.code().name, cost, exc.details(),
+                        "reportClient failed address=%s code=%s cost=%.3fms "
+                        "requestId=%s %s: %s",
+                        address,
+                        exc.code().name,
+                        cost,
+                        request_id,
+                        summary,
+                        exc.details(),
                     )
-                    self.logger.debug("Polaris ReportClient failed address=%s code=%s cost=%.3fms: %s",
-                                      address, exc.code().name, cost, exc.details())
+                    self.logger.debug(
+                        "Polaris ReportClient failed address=%s code=%s cost=%.3fms "
+                        "requestId=%s %s: %s",
+                        address,
+                        exc.code().name,
+                        cost,
+                        request_id,
+                        summary,
+                        exc.details(),
+                    )
                 else:
                     self.logger.error(
                         "Polaris %s failed address=%s code=%s cost=%.3fms: %s",
