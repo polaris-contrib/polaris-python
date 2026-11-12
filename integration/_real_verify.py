@@ -301,9 +301,13 @@ def demo_process_command(script, arguments):
     """Build a posix_spawn-compatible command that preserves demo cwd semantics."""
     launcher = (
         "import os, runpy, sys\n"
+        "repo = sys.argv[3]\n"
+        "sys.path[:0] = [os.path.join(repo, 'src'), repo]\n"
+        "from integration._support import install_example_event_reporting\n"
+        "install_example_event_reporting()\n"
         "os.chdir(sys.argv[1])\n"
         "script = sys.argv[2]\n"
-        "sys.argv = [script, *sys.argv[3:]]\n"
+        "sys.argv = [script, *sys.argv[4:]]\n"
         "runpy.run_path(script, run_name='__main__')\n"
     )
     return [
@@ -312,14 +316,21 @@ def demo_process_command(script, arguments):
         launcher,
         str(script.parent),
         str(script),
+        str(REPO),
         *arguments,
     ]
+
+
+def demo_output_name(script):
+    """Return a stable output label without collapsing sibling fixture scripts."""
+    script = Path(script)
+    return script.parent.name if script.name == "main.py" else script.stem
 
 
 def start_demo(script, arguments, env, expected_key, timeout=60):
     timeout = scenario_operation_timeout(env, timeout)
     run_dir = Path(env["POLARIS_DEMO_RUN_DIR"])
-    output_path = run_dir / f"{script.parent.name}.stdout.log"
+    output_path = run_dir / f"{demo_output_name(script)}.stdout.log"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as output:
         process = subprocess.Popen(
@@ -388,9 +399,10 @@ def run_demo(script, arguments, env, timeout=90):
         check=False,
         close_fds=False,
     )
-    output_path = Path(env["POLARIS_DEMO_RUN_DIR"]) / f"{script.parent.name}.stdout.log"
+    output_name = demo_output_name(script)
+    output_path = Path(env["POLARIS_DEMO_RUN_DIR"]) / f"{output_name}.stdout.log"
     output_path.write_text(completed.stdout, encoding="utf-8")
-    (output_path.parent / f"{script.parent.name}.stderr.log").write_text(completed.stderr, encoding="utf-8")
+    (output_path.parent / f"{output_name}.stderr.log").write_text(completed.stderr, encoding="utf-8")
     if completed.returncode:
         raise RuntimeError(
             f"{script} exited with {completed.returncode}:\n{completed.stderr or completed.stdout}"
@@ -544,6 +556,32 @@ def wait_for_pushed_events(run, event_names, timeout=30):
             return
         time.sleep(0.2)
     raise RuntimeError(f"Circuit events were not accepted by Pushgateway: {missing}")
+
+
+def assert_event_reporters_enabled(run):
+    """Require every non-probe Context that logged initialization to use Pushgateway."""
+    log_root = Path(run) / "polaris" / "log"
+    states = {}
+    for path in log_root.rglob("base/*.log"):
+        if path.name.startswith("."):
+            continue
+        component = path.relative_to(log_root).parts[0]
+        if component == "probe" or component.endswith("-probe"):
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "polaris engine initialized" not in line or "eventReporters=" not in line:
+                continue
+            state = line.split("eventReporters=", 1)[1].split(" statReporter=", 1)[0]
+            states[path] = state
+    expected = "['PushGatewayEventReporter']"
+    disabled = [path for path, state in states.items() if state != expected]
+    if disabled:
+        details = ", ".join(
+            f"{path.relative_to(run)}={states[path]}" for path in disabled
+        )
+        raise RuntimeError(f"non-probe Contexts did not enable event reporting: {details}")
+    if not states:
+        raise RuntimeError("no non-probe Context logged event reporter initialization")
 
 
 def verify_quickstart(env, address, service_token, namespace):
@@ -1015,6 +1053,7 @@ def main():
         with verification_directory(__file__):
             env = scenario_environment(address)
             result = run_scenario(args.demo, address, service_token, namespace, env)
+            assert_event_reporters_enabled(env["POLARIS_DEMO_RUN_DIR"])
             print(json.dumps({"demo": args.demo, "server": address, **result}, sort_keys=True))
         return 0
     except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as error:

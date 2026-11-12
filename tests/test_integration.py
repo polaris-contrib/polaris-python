@@ -33,6 +33,7 @@ import pytest
 from integration import _manage as manager, _runtime as runtime
 from integration._real_verify import (
     E2E_SKILL_FIXTURE_NAME,
+    assert_event_reporters_enabled,
     cache_backup_glob,
     default_skill_address,
     e2e_namespace,
@@ -119,6 +120,32 @@ def test_real_verification_event_reporter_uses_pushgateway(monkeypatch):
     assert connector.get_connect_timeout() == 5000
     assert connector.get_message_timeout() == 15000
     assert config.get_global().get_api().get_timeout() == 15000
+
+
+def test_real_verification_requires_non_probe_event_reporters(tmp_path):
+    provider = tmp_path / "polaris/log/provider/base/polaris.log"
+    provider.parent.mkdir(parents=True)
+    provider.write_text(
+        "polaris engine initialized eventReporters=['PushGatewayEventReporter'] "
+        "statReporter=PrometheusReporter\n",
+        encoding="utf-8",
+    )
+    probe = tmp_path / "polaris/log/probe/base/polaris.log"
+    probe.parent.mkdir(parents=True)
+    probe.write_text(
+        "polaris engine initialized eventReporters=[] statReporter=PrometheusReporter\n",
+        encoding="utf-8",
+    )
+    assert_event_reporters_enabled(tmp_path)
+
+    consumer = tmp_path / "polaris/log/consumer/base/polaris.log"
+    consumer.parent.mkdir(parents=True)
+    consumer.write_text(
+        "polaris engine initialized eventReporters=[] statReporter=PrometheusReporter\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="consumer/base"):
+        assert_event_reporters_enabled(tmp_path)
 
 
 def test_real_verification_timeouts_can_be_overridden(monkeypatch):
@@ -390,6 +417,31 @@ def test_real_verifier_one_shot_demo_also_avoids_fork(tmp_path, monkeypatch):
     assert real.run_demo(script, [], env, timeout=5) == '{"ok": true}\n'
     assert observed["close_fds"] is False
     assert "cwd" not in observed
+
+
+def test_real_verifier_outputs_from_sibling_fixtures_do_not_overwrite(tmp_path):
+    from integration import _real_verify as real
+
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    provider = fixtures / "provider.py"
+    consumer = fixtures / "consumer.py"
+    provider.write_text("print('provider output')\n", encoding="utf-8")
+    consumer.write_text("print('consumer output')\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    env = {
+        **os.environ,
+        "POLARIS_DEMO_RUN_DIR": str(run_dir),
+        "POLARIS_DEMO_DIRECTORY": str(fixtures),
+    }
+
+    real.run_demo(provider, [], env, timeout=5)
+    real.run_demo(consumer, [], env, timeout=5)
+
+    assert (run_dir / "provider.stdout.log").read_text(encoding="utf-8") == "provider output\n"
+    assert (run_dir / "consumer.stdout.log").read_text(encoding="utf-8") == "consumer output\n"
+    assert not (run_dir / "fixtures.stdout.log").exists()
 
 
 def test_real_instance_host_uses_polaris_route_source_ip(monkeypatch):
@@ -1163,6 +1215,52 @@ def test_cleanup_preview_and_removal_are_scoped_to_selected_demo(example_tree, c
     assert (selected / ".runtime/manual-record").read_text() == "manual demo"
     assert (selected / "polaris.yaml").read_text() == "keep YAML"
     assert (manager.LOG_ROOT / "sdkconfig/file/console.log").read_text() == "retained"
+
+
+def test_integration_cleanup_scope_does_not_expand_to_all_scenarios(
+    example_tree, monkeypatch,
+):
+    scope = manager.SCENARIOS / "a2a"
+    a2a_logs = manager.LOG_ROOT / "a2a"
+    mcp_logs = manager.LOG_ROOT / "mcp"
+    a2a_logs.mkdir(parents=True)
+    mcp_logs.mkdir(parents=True)
+    (a2a_logs / "console.log").write_text("selected", encoding="utf-8")
+    (mcp_logs / "console.log").write_text("unrelated", encoding="utf-8")
+    deleted = []
+
+    monkeypatch.setattr(
+        manager,
+        "test_services",
+        lambda: (
+            "http://127.0.0.1:8090",
+            "python-integration",
+            [
+                "polaris-python-e2e-a2a-1",
+                "polaris-python-e2e-mcp-2",
+            ],
+        ),
+    )
+
+    def delete_services(_address, _namespace, names):
+        deleted.extend(names)
+        return names
+
+    monkeypatch.setattr(manager, "delete_test_services", delete_services)
+
+    assert manager.directories(scope) == [manager.EXAMPLES / "a2a"]
+    assert manager.cleanup(
+        scope,
+        SimpleNamespace(
+            force=True,
+            dry_run=False,
+            keep_logs=False,
+            delete_services=True,
+        ),
+    ) == 0
+    assert deleted == ["polaris-python-e2e-a2a-1"]
+    assert not a2a_logs.exists()
+    assert (mcp_logs / "console.log").read_text(encoding="utf-8") == "unrelated"
 
 
 def test_cleanup_keep_logs_stops_processes_but_preserves_logs(example_tree):

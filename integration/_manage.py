@@ -110,12 +110,16 @@ def contained(path, root):
 
 def directories(scope):
     scope = Path(scope).resolve()
-    if contained(scope, INTEGRATION):
-        return [EXAMPLES / name for name in sorted(set(VERIFIERS) | set(GROUPS))]
+    if contained(scope, EXAMPLES):
+        root = EXAMPLES
+    elif contained(scope, INTEGRATION):
+        root = SCENARIOS
+    else:
+        return []
     return [
         EXAMPLES / name
         for name in sorted(set(VERIFIERS) | set(GROUPS))
-        if contained(EXAMPLES / name, scope)
+        if contained((root / name).resolve(), scope)
     ]
 
 
@@ -629,13 +633,10 @@ def _scope_name(directory):
         return "" if name == "." else name
     if directory == INTEGRATION:
         return ""
-    try:
-        relative = directory.relative_to(INTEGRATION)
-    except ValueError:
-        return None
-    if relative.parts[:1] == ("scenarios",) and len(relative.parts) > 1:
-        return Path(*relative.parts[1:]).as_posix()
-    return ""
+    if contained(directory, SCENARIOS):
+        relative = directory.relative_to(SCENARIOS)
+        return "" if relative == Path(".") else relative.as_posix()
+    return None
 
 
 def _write_summary(action, results):

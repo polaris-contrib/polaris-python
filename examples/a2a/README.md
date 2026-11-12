@@ -10,7 +10,7 @@ Register an existing endpoint explicitly from the repository root:
 
 ```bash
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
-  make -C examples run DEMO=a2a ARGS='--namespace default --card $PWD/examples/a2a/agent-card.json'
+  make -C examples run DEMO=a2a ARGS="--namespace default --card '$PWD/examples/a2a/agent-card.json'"
 ```
 
 One AgentCard registers one instance. The example uses the first advertised interface:

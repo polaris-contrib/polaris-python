@@ -137,3 +137,28 @@ def configure_e2e_event_reporting(config, env=None):
         environ.get("POLARIS_EVENT_REPORTER_RETRY_INTERVAL", "100")
     )
     return config
+
+
+def install_example_event_reporting():
+    """Patch SDK context factories so launched examples use the E2E reporter."""
+    import importlib
+
+    config_module = importlib.import_module("polaris.api.config")
+    original_init = config_module.init_context_by_config
+
+    def configured_init(config, *args, **kwargs):
+        configure_e2e_event_reporting(config)
+        return original_init(config, *args, **kwargs)
+
+    for module_name in (
+        "polaris",
+        "polaris.api",
+        "polaris.api.config",
+        "polaris.api.consumer",
+        "polaris.api.provider",
+        "polaris.api.skill",
+    ):
+        module = importlib.import_module(module_name)
+        if hasattr(module, "init_context_by_config"):
+            module.init_context_by_config = configured_init
+    return configured_init

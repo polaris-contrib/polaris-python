@@ -18,7 +18,7 @@ svc#<namespace>#<service>#instance.json
 
 ```bash
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 \
-  make -C examples run DEMO=cache/restart ARGS='default demo --persist-dir $PWD/examples/cache/restart/.logs/manual/polaris/backup/restart'
+  make -C examples run DEMO=cache/restart ARGS="default demo --persist-dir '$PWD/examples/cache/restart/.logs/manual/polaris/backup/restart'"
 ```
 
 示例只发现已有服务。跨次运行复用这个 `--persist-dir` 可观察重启恢复；

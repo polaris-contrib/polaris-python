@@ -9,7 +9,7 @@
 
 ```bash
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
-  make -C examples run DEMO=a2a ARGS='--namespace default --card $PWD/examples/a2a/agent-card.json'
+  make -C examples run DEMO=a2a ARGS="--namespace default --card '$PWD/examples/a2a/agent-card.json'"
 ```
 
 一张 AgentCard 注册一个实例。示例读取第一个 interface：`service` 取

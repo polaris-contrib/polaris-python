@@ -22,6 +22,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -29,8 +30,14 @@ from urllib.parse import urlsplit
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._support import demo_backup_directory, demo_log_options
+from examples._support import (
+    demo_backup_directory,
+    demo_log_options,
+    wait_for_operation_or_stop,
+    wait_for_stop,
+)
 from polaris import Configuration, ConsumerAPI, ProviderAPI, init_context_by_config
+from polaris.pkg.model.error import ErrorCode, SDKError
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import GetAllInstancesRequest
 
@@ -59,20 +66,84 @@ def first_interface(card, a2a_version):
     return card["url"], card.get("preferredTransport", "JSONRPC")
 
 
-async def wait_for_registration(consumer, namespace, service, instance_id):
+def retryable_discovery_error(error):
+    """Return whether discovery can retry this transient SDK failure."""
+    return (
+        error.err_code in (
+            ErrorCode.ErrCodeAPITimeoutError,
+            ErrorCode.ErrCodeNetworkError,
+            ErrorCode.ErrCodeAPIInstanceNotFound,
+        )
+        or (
+            error.err_code == ErrorCode.ErrCodeServerError
+            and "not found" in error.msg.lower()
+        )
+    )
+
+
+def registration_mismatch(node, card, card_text, a2a_version, host, port):
+    """Describe why a discovered instance is not the current registration."""
+    metadata = node.get_metadata()
+    if not isinstance(metadata, Mapping):
+        return "instance metadata is not an object"
+    if metadata.get("ai-agent-name") != card["name"]:
+        return "ai-agent-name does not match the current AgentCard"
+    if metadata.get("ai-agent-card") != card_text:
+        return "registered AgentCard is stale"
+    if metadata.get("ai-a2a-version") != a2a_version:
+        return "registered A2A schema version is stale"
+    if node.get_version() != card["version"]:
+        return "instance version is stale"
+    if node.get_host() != host:
+        return "instance host does not match the AgentCard interface"
+    if node.get_port() != port:
+        return "instance port does not match registration_port"
+    if node.get_protocol() != "":
+        return "A2A instance protocol must be empty"
+    return None
+
+
+async def wait_for_registration(
+        consumer, *, namespace, service, instance_id, card, card_text,
+        a2a_version, host, port, stop):
+    """Wait until discovery reflects the AgentCard from this registration."""
     deadline = time.monotonic() + 10
+    last_mismatch = "instance not found"
     while time.monotonic() < deadline:
-        snapshot = await consumer.async_get_all_instances(
-            GetAllInstancesRequest(namespace=namespace, service=service),
-        )
-        node = next(
-            (item for item in snapshot.instances if item.get_id() == instance_id),
-            None,
-        )
-        if node is not None:
-            return snapshot, node
-        await asyncio.sleep(0.2)
-    raise RuntimeError(f"instance {instance_id} did not become discoverable")
+        if stop.is_set():
+            return None
+        try:
+            completed, snapshot = await wait_for_operation_or_stop(
+                stop,
+                consumer.async_get_all_instances(
+                    GetAllInstancesRequest(namespace=namespace, service=service),
+                ),
+            )
+        except SDKError as error:
+            if not retryable_discovery_error(error):
+                raise
+            snapshot = None
+        else:
+            if not completed:
+                return None
+            if stop.is_set():
+                return None
+            node = next(
+                (item for item in snapshot.instances if item.get_id() == instance_id),
+                None,
+            )
+            if node is not None:
+                mismatch = registration_mismatch(
+                    node, card, card_text, a2a_version, host, port)
+                if mismatch is None:
+                    return snapshot, node
+                last_mismatch = mismatch
+        if await wait_for_stop(stop, 0.2):
+            return None
+    if stop.is_set():
+        return None
+    raise RuntimeError(
+        f"instance {instance_id} did not expose the current AgentCard: {last_mismatch}")
 
 
 async def run(args):
@@ -116,12 +187,21 @@ async def run(args):
                     "ai-a2a-version": args.a2a_version,
                 },
             ))
-            snapshot, node = await wait_for_registration(
+            registration = await wait_for_registration(
                 consumer,
-                args.namespace,
-                card["name"],
-                registered.instance_id,
+                namespace=args.namespace,
+                service=card["name"],
+                instance_id=registered.instance_id,
+                card=card,
+                card_text=card_text,
+                a2a_version=args.a2a_version,
+                host=host,
+                port=args.registration_port,
+                stop=stop,
             )
+            if registration is None:
+                return
+            snapshot, node = registration
             print(json.dumps({
                 "agent": node.get_metadata()["ai-agent-name"],
                 "a2a_version": node.get_metadata()["ai-a2a-version"],
@@ -139,16 +219,18 @@ async def run(args):
                 except TimeoutError:
                     pass
     finally:
-        if registered is not None:
-            await provider.async_deregister_instance(InstanceDeRegisterRequest(
-                namespace=args.namespace,
-                service=card["name"],
-                service_token=args.token,
-                host=host,
-                port=args.registration_port,
-                instance_id=registered.instance_id,
-            ))
-        await asyncio.to_thread(context.destroy)
+        try:
+            if registered is not None:
+                await provider.async_deregister_instance(InstanceDeRegisterRequest(
+                    namespace=args.namespace,
+                    service=card["name"],
+                    service_token=args.token,
+                    host=host,
+                    port=args.registration_port,
+                    instance_id=registered.instance_id,
+                ))
+        finally:
+            await asyncio.to_thread(context.destroy)
 
 
 def registration_port(value):

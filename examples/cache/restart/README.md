@@ -18,7 +18,7 @@ From the repository root:
 
 ```bash
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 \
-  make -C examples run DEMO=cache/restart ARGS='default demo --persist-dir $PWD/examples/cache/restart/.logs/manual/polaris/backup/restart'
+  make -C examples run DEMO=cache/restart ARGS="default demo --persist-dir '$PWD/examples/cache/restart/.logs/manual/polaris/backup/restart'"
 ```
 
 The demo only discovers an existing service. Reuse this `--persist-dir` across runs

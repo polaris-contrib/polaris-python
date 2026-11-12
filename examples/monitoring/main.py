@@ -30,7 +30,13 @@ from aiohttp import ClientSession, web
 REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 
-from examples._support import demo_backup_directory, demo_log_options, get_local_host
+from examples._support import (
+    demo_backup_directory,
+    demo_log_options,
+    get_local_host,
+    wait_for_operation_or_stop,
+    wait_for_stop,
+)
 from polaris import Configuration, ConsumerAPI, ProviderAPI, SDKError, init_context_by_config
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import (
@@ -57,15 +63,23 @@ def stop_on_signals(loop, stop):
             signal.signal(signum, handler)
 
 
-async def wait_for_instance(consumer, namespace, service, instance_id):
+async def wait_for_instance(consumer, namespace, service, instance_id, stop):
     deadline = time.monotonic() + 40
     while time.monotonic() < deadline:
+        if stop.is_set():
+            return None
         try:
-            snapshot = await consumer.async_get_all_instances(
-                GetInstancesRequest(namespace=namespace, service=service),
+            completed, snapshot = await wait_for_operation_or_stop(
+                stop,
+                consumer.async_get_all_instances(
+                    GetInstancesRequest(namespace=namespace, service=service),
+                ),
             )
         except SDKError:
             snapshot = None
+        else:
+            if not completed or stop.is_set():
+                return None
         if snapshot is not None:
             node = next(
                 (item for item in snapshot.instances if item.get_id() == instance_id),
@@ -73,7 +87,10 @@ async def wait_for_instance(consumer, namespace, service, instance_id):
             )
             if node is not None:
                 return node
-        await asyncio.sleep(0.2)
+        if await wait_for_stop(stop, 0.2):
+            return None
+    if stop.is_set():
+        return None
     raise RuntimeError("registered echo instance did not become discoverable")
 
 
@@ -91,32 +108,34 @@ async def run(args):
     app.router.add_get("/echo", echo)
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
-    site = web.TCPSite(runner, args.host, 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-
-    config = Configuration()
-    config.set_default()
-    config.get_global().get_server_connector().addresses = args.server.split(",")
-    config.get_global().get_server_connector().token = os.getenv("POLARIS_TOKEN", "")
-    config.get_global().get_admin().host = "127.0.0.1"
-    config.get_global().get_admin().port = args.metrics_port
-    options = config.get_global().get_stat_reporter().get_prometheus()
-    options.type = args.mode
-    options.address = args.push_address
-    options.push_interval = args.push_interval
-    config.get_consumer().get_local_cache().persist_dir = str(
-        demo_backup_directory(__file__)
-    )
-    context = await asyncio.to_thread(
-        init_context_by_config,
-        config,
-        log_options=demo_log_options(__file__),
-    )
-    provider, consumer = ProviderAPI(context), ConsumerAPI(context)
+    context = None
+    provider = None
     registered = None
     stop = asyncio.Event()
     try:
+        site = web.TCPSite(runner, args.host, 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+
+        config = Configuration()
+        config.set_default()
+        config.get_global().get_server_connector().addresses = args.server.split(",")
+        config.get_global().get_server_connector().token = os.getenv("POLARIS_TOKEN", "")
+        config.get_global().get_admin().host = "127.0.0.1"
+        config.get_global().get_admin().port = args.metrics_port
+        options = config.get_global().get_stat_reporter().get_prometheus()
+        options.type = args.mode
+        options.address = args.push_address
+        options.push_interval = args.push_interval
+        config.get_consumer().get_local_cache().persist_dir = str(
+            demo_backup_directory(__file__)
+        )
+        context = await asyncio.to_thread(
+            init_context_by_config,
+            config,
+            log_options=demo_log_options(__file__),
+        )
+        provider, consumer = ProviderAPI(context), ConsumerAPI(context)
         with stop_on_signals(asyncio.get_running_loop(), stop):
             registered = await provider.async_register_instance(InstanceRegisterRequest(
                 namespace=args.namespace,
@@ -132,7 +151,10 @@ async def run(args):
                 args.namespace,
                 args.service,
                 registered.instance_id,
+                stop,
             )
+            if node is None:
+                return
             authority = f"[{node.get_host()}]" if ":" in node.get_host() else node.get_host()
             async with ClientSession() as client:
                 for status in (200, 503, 200):
@@ -152,10 +174,10 @@ async def run(args):
                         labels="env=demo",
                     ))
                 if args.duration:
-                    try:
-                        await asyncio.wait_for(stop.wait(), timeout=args.duration)
-                    except TimeoutError:
-                        pass
+                    if await wait_for_stop(stop, args.duration):
+                        return
+                if stop.is_set():
+                    return
                 metrics_url = (
                     f"http://127.0.0.1:{context.engine.stat_reporter.port}/metric"
                     if args.mode == "pull"
@@ -191,8 +213,11 @@ async def run(args):
                     instance_id=registered.instance_id,
                 ))
         finally:
-            await asyncio.to_thread(context.destroy)
-            await runner.cleanup()
+            try:
+                if context is not None:
+                    await asyncio.to_thread(context.destroy)
+            finally:
+                await runner.cleanup()
 
 
 def main(argv=None):

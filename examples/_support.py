@@ -15,9 +15,48 @@
 
 """Small runtime helpers shared by user-facing examples."""
 
+import asyncio
 import os
 import socket
 from pathlib import Path
+
+
+async def wait_for_operation_or_stop(stop, operation):
+    """Run one coroutine until it finishes or the example receives a stop signal."""
+    if stop.is_set():
+        if asyncio.iscoroutine(operation):
+            operation.close()
+        return False, None
+    operation_task = asyncio.create_task(operation)
+    stop_task = asyncio.create_task(stop.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (operation_task, stop_task),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if operation_task in done:
+            return True, operation_task.result()
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        return False, None
+    finally:
+        if not stop_task.done():
+            stop_task.cancel()
+        await asyncio.gather(stop_task, return_exceptions=True)
+        if not operation_task.done():
+            operation_task.cancel()
+            await asyncio.gather(operation_task, return_exceptions=True)
+
+
+async def wait_for_stop(stop, timeout):
+    """Wait for a stop request, returning True if it arrives before the timeout."""
+    if timeout <= 0 or stop.is_set():
+        return stop.is_set()
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=timeout)
+    except TimeoutError:
+        return False
+    return True
 
 
 def get_local_host(server_address):

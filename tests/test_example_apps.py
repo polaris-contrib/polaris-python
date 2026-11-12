@@ -15,6 +15,7 @@
 
 """Exercise manual example launchers independently from integration verification."""
 
+import asyncio
 import json
 import os
 import shutil
@@ -220,6 +221,475 @@ def test_example_logs_select_latest_category_only(example_apps):
         os.utime(run, (stamp, stamp))
     files = apps.log_files([directory], latest=True, category="cache")
     assert files == [directory / ".logs/run-new/polaris/log/cache/cache.log"]
+
+
+def test_example_make_commands_expand_pwd_before_make():
+    for path in (REPO / "examples").rglob("README*.md"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "$PWD" in line:
+                assert "ARGS='" not in line, path
+
+
+def test_a2a_example_retries_transient_discovery_and_requires_current_card():
+    from examples.a2a import main as example
+    from polaris.pkg.model.error import ErrorCode, SDKError
+
+    old_card = {
+        "name": "agent",
+        "version": "1.0.0",
+        "supportedInterfaces": [{
+            "url": "http://127.0.0.1:8080/a2a",
+            "protocolBinding": "JSONRPC",
+        }],
+    }
+    current_card = {**old_card, "version": "2.0.0"}
+    old_text = json.dumps(old_card)
+    current_text = json.dumps(current_card)
+
+    def node(card, card_text):
+        return SimpleNamespace(
+            get_id=lambda: "registered-instance",
+            get_metadata=lambda: {
+                "ai-agent-name": card["name"],
+                "ai-agent-card": card_text,
+                "ai-a2a-version": "1.0",
+            },
+            get_version=lambda: card["version"],
+            get_host=lambda: "127.0.0.1",
+            get_port=lambda: 1,
+            get_protocol=lambda: "",
+        )
+
+    responses = [
+        SDKError(ErrorCode.ErrCodeAPITimeoutError, "temporary timeout"),
+        SimpleNamespace(instances=[node(old_card, old_text)]),
+        SimpleNamespace(instances=[node(current_card, current_text)]),
+    ]
+    calls = []
+
+    async def discover(_request):
+        calls.append("discover")
+        value = responses.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def scenario():
+        return await asyncio.wait_for(
+            example.wait_for_registration(
+                SimpleNamespace(async_get_all_instances=discover),
+                namespace="ns",
+                service="agent",
+                instance_id="registered-instance",
+                card=current_card,
+                card_text=current_text,
+                a2a_version="1.0",
+                host="127.0.0.1",
+                port=1,
+                stop=asyncio.Event(),
+            ),
+            timeout=2,
+        )
+
+    _, discovered = asyncio.run(scenario())
+    assert discovered.get_version() == "2.0.0"
+    assert discovered.get_metadata()["ai-agent-card"] == current_text
+    assert calls == ["discover", "discover", "discover"]
+
+
+def test_a2a_example_stop_cancels_inflight_discovery():
+    from examples.a2a import main as example
+
+    async def discover(_request):
+        await asyncio.sleep(3600)
+
+    async def scenario():
+        stop = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.01, stop.set)
+        return await asyncio.wait_for(
+            example.wait_for_registration(
+                SimpleNamespace(async_get_all_instances=discover),
+                namespace="ns",
+                service="agent",
+                instance_id="registered-instance",
+                card={"name": "agent", "version": "1.0.0"},
+                card_text="{}",
+                a2a_version="1.0",
+                host="127.0.0.1",
+                port=1,
+                stop=stop,
+            ),
+            timeout=1,
+        )
+
+    assert asyncio.run(scenario()) is None
+
+
+def test_a2a_example_destroys_context_when_deregistration_fails(tmp_path, monkeypatch):
+    from examples.a2a import main as example
+
+    card = {
+        "name": "agent",
+        "version": "1.0.0",
+        "supportedInterfaces": [{
+            "url": "http://127.0.0.1:8080/a2a",
+            "protocolBinding": "JSONRPC",
+        }],
+    }
+    card_text = json.dumps(card)
+    card_path = tmp_path / "card.json"
+    card_path.write_text(card_text, encoding="utf-8")
+    calls = []
+
+    node = SimpleNamespace(
+        get_id=lambda: "registered-instance",
+        get_metadata=lambda: {
+            "ai-agent-name": "agent",
+            "ai-agent-card": card_text,
+            "ai-a2a-version": "1.0",
+        },
+        get_version=lambda: "1.0.0",
+        get_host=lambda: "127.0.0.1",
+        get_port=lambda: 1,
+        get_protocol=lambda: "",
+    )
+
+    async def register(_request):
+        calls.append("register")
+        return SimpleNamespace(instance_id="registered-instance")
+
+    async def deregister(_request):
+        calls.append("deregister")
+        raise RuntimeError("deregistration failed")
+
+    async def discover(_request):
+        return SimpleNamespace(instances=[node])
+
+    class Context:
+        @staticmethod
+        def destroy():
+            calls.append("destroy")
+
+    provider = SimpleNamespace(
+        async_register_instance=register,
+        async_deregister_instance=deregister,
+    )
+    consumer = SimpleNamespace(async_get_all_instances=discover)
+    args = SimpleNamespace(
+        card=str(card_path),
+        a2a_version="1.0",
+        namespace="ns",
+        server="offline:8091",
+        token="",
+        registration_port=1,
+        duration=0,
+        keep_running=False,
+    )
+
+    monkeypatch.setattr(example.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(example, "demo_backup_directory", lambda *_: tmp_path)
+    monkeypatch.setattr(example, "demo_log_options", lambda *_: None)
+    monkeypatch.setattr(
+        example, "init_context_by_config", lambda *_args, **_kwargs: Context(),
+    )
+    monkeypatch.setattr(example, "ProviderAPI", lambda _context: provider)
+    monkeypatch.setattr(example, "ConsumerAPI", lambda _context: consumer)
+
+    with pytest.raises(RuntimeError, match="deregistration failed"):
+        asyncio.run(example.run(args))
+    assert calls == ["register", "deregister", "destroy"]
+
+
+def test_monitoring_example_stop_during_discovery_cleans_up(tmp_path, monkeypatch):
+    from examples.monitoring import main as example
+
+    calls = []
+    handlers = {}
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def register(_request):
+        calls.append("register")
+        return SimpleNamespace(instance_id="registered-instance")
+
+    async def deregister(_request):
+        calls.append("deregister")
+
+    async def discover(_request):
+        calls.append("discover")
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        await asyncio.sleep(3600)
+
+    class Context:
+        @staticmethod
+        def destroy():
+            calls.append("destroy")
+
+    class Application:
+        def __init__(self):
+            self.router = SimpleNamespace(add_get=lambda *_args, **_kwargs: None)
+
+    class Runner:
+        @staticmethod
+        async def setup():
+            return None
+
+        @staticmethod
+        async def cleanup():
+            calls.append("cleanup")
+
+    site = SimpleNamespace(
+        start=noop,
+        _server=SimpleNamespace(
+            sockets=[SimpleNamespace(getsockname=lambda: ("127.0.0.1", 1234))],
+        ),
+    )
+    provider = SimpleNamespace(
+        async_register_instance=register,
+        async_deregister_instance=deregister,
+    )
+    consumer = SimpleNamespace(async_get_all_instances=discover)
+    args = SimpleNamespace(
+        namespace="ns",
+        service="monitoring",
+        token="",
+        server="offline:8091",
+        host="127.0.0.1",
+        mode="push",
+        metrics_port=0,
+        push_address=[],
+        push_interval=10000,
+        duration=31,
+        keep_running=False,
+    )
+
+    def fake_signal(signum, handler):
+        if callable(handler):
+            handlers[signum] = handler
+            return None
+        return None
+
+    monkeypatch.setattr(example.signal, "signal", fake_signal)
+    monkeypatch.setattr(example, "demo_backup_directory", lambda *_: tmp_path)
+    monkeypatch.setattr(example, "demo_log_options", lambda *_: None)
+    monkeypatch.setattr(
+        example, "init_context_by_config", lambda *_args, **_kwargs: Context(),
+    )
+    monkeypatch.setattr(example, "ProviderAPI", lambda _context: provider)
+    monkeypatch.setattr(example, "ConsumerAPI", lambda _context: consumer)
+    monkeypatch.setattr(example.web, "Application", Application)
+    monkeypatch.setattr(example.web, "AppRunner", lambda *_args, **_kwargs: Runner())
+    monkeypatch.setattr(example.web, "TCPSite", lambda *_args, **_kwargs: site)
+
+    async def scenario():
+        await asyncio.wait_for(example.run(args), timeout=1)
+
+    asyncio.run(scenario())
+    assert calls == ["register", "discover", "deregister", "destroy", "cleanup"]
+
+
+def test_monitoring_example_stop_during_aggregation_skips_metrics(
+    tmp_path, monkeypatch,
+):
+    from examples.monitoring import main as example
+
+    calls = []
+    requests = []
+    handlers = {}
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def register(_request):
+        calls.append("register")
+        return SimpleNamespace(instance_id="registered-instance")
+
+    async def deregister(_request):
+        calls.append("deregister")
+
+    async def discover(_request):
+        calls.append("discover")
+        node = SimpleNamespace(
+            get_id=lambda: "registered-instance",
+            get_host=lambda: "127.0.0.1",
+            get_port=lambda: 1234,
+        )
+        return SimpleNamespace(instances=[node])
+
+    async def report(_request):
+        calls.append("report")
+        if calls.count("report") == 3:
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            await asyncio.sleep(0)
+
+    class Context:
+        class Engine:
+            class StatReporter:
+                port = 12345
+
+            stat_reporter = StatReporter()
+
+        engine = Engine()
+
+        @staticmethod
+        def destroy():
+            calls.append("destroy")
+
+    class Application:
+        def __init__(self):
+            self.router = SimpleNamespace(add_get=lambda *_args, **_kwargs: None)
+
+    class Runner:
+        @staticmethod
+        async def setup():
+            return None
+
+        @staticmethod
+        async def cleanup():
+            calls.append("cleanup")
+
+    class Response:
+        status = 200
+
+        async def read(self):
+            return b"echo"
+
+        async def text(self):
+            return ""
+
+    class Request:
+        async def __aenter__(self):
+            return Response()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        @staticmethod
+        def get(url):
+            requests.append(url)
+            return Request()
+
+    site = SimpleNamespace(
+        start=noop,
+        _server=SimpleNamespace(
+            sockets=[SimpleNamespace(getsockname=lambda: ("127.0.0.1", 1234))],
+        ),
+    )
+    provider = SimpleNamespace(
+        async_register_instance=register,
+        async_deregister_instance=deregister,
+    )
+    consumer = SimpleNamespace(
+        async_get_all_instances=discover,
+        async_update_service_call_result=report,
+    )
+    args = SimpleNamespace(
+        namespace="ns",
+        service="monitoring",
+        token="",
+        server="offline:8091",
+        host="127.0.0.1",
+        mode="pull",
+        metrics_port=0,
+        push_address=[],
+        push_interval=10000,
+        duration=31,
+        keep_running=False,
+    )
+
+    def fake_signal(signum, handler):
+        if callable(handler):
+            handlers[signum] = handler
+
+    monkeypatch.setattr(example.signal, "signal", fake_signal)
+    monkeypatch.setattr(example, "demo_backup_directory", lambda *_: tmp_path)
+    monkeypatch.setattr(example, "demo_log_options", lambda *_: None)
+    monkeypatch.setattr(
+        example, "init_context_by_config", lambda *_args, **_kwargs: Context(),
+    )
+    monkeypatch.setattr(example, "ProviderAPI", lambda _context: provider)
+    monkeypatch.setattr(example, "ConsumerAPI", lambda _context: consumer)
+    monkeypatch.setattr(example.web, "Application", Application)
+    monkeypatch.setattr(example.web, "AppRunner", lambda *_args, **_kwargs: Runner())
+    monkeypatch.setattr(example.web, "TCPSite", lambda *_args, **_kwargs: site)
+    monkeypatch.setattr(example, "ClientSession", Client)
+
+    async def scenario():
+        return await asyncio.wait_for(example.run(args), timeout=1)
+
+    assert asyncio.run(scenario()) is None
+    assert not any(url.endswith("/metric") for url in requests)
+    assert calls == [
+        "register", "discover", "report", "report", "report",
+        "deregister", "destroy", "cleanup",
+    ]
+
+
+def test_monitoring_example_cleans_listener_when_context_init_fails(
+    tmp_path, monkeypatch,
+):
+    from examples.monitoring import main as example
+
+    calls = []
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    def fail_init(*_args, **_kwargs):
+        calls.append("init")
+        raise RuntimeError("context initialization failed")
+
+    class Application:
+        def __init__(self):
+            self.router = SimpleNamespace(add_get=lambda *_args, **_kwargs: None)
+
+    class Runner:
+        @staticmethod
+        async def setup():
+            calls.append("setup")
+
+        @staticmethod
+        async def cleanup():
+            calls.append("cleanup")
+
+    site = SimpleNamespace(
+        start=noop,
+        _server=SimpleNamespace(
+            sockets=[SimpleNamespace(getsockname=lambda: ("127.0.0.1", 1234))],
+        ),
+    )
+    args = SimpleNamespace(
+        namespace="ns",
+        service="monitoring",
+        token="",
+        server="offline:8091",
+        host="127.0.0.1",
+        mode="pull",
+        metrics_port=0,
+        push_address=[],
+        push_interval=10000,
+        duration=31,
+        keep_running=False,
+    )
+
+    monkeypatch.setattr(example, "demo_backup_directory", lambda *_: tmp_path)
+    monkeypatch.setattr(example, "demo_log_options", lambda *_: None)
+    monkeypatch.setattr(example, "init_context_by_config", fail_init)
+    monkeypatch.setattr(example.web, "Application", Application)
+    monkeypatch.setattr(example.web, "AppRunner", lambda *_args, **_kwargs: Runner())
+    monkeypatch.setattr(example.web, "TCPSite", lambda *_args, **_kwargs: site)
+
+    with pytest.raises(RuntimeError, match="context initialization failed"):
+        asyncio.run(asyncio.wait_for(example.run(args), timeout=1))
+    assert calls == ["setup", "init", "cleanup"]
 
 
 def wait_for(predicate, timeout=5):

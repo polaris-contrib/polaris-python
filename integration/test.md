@@ -147,7 +147,7 @@ SDK 本身仍保持只读。
 `POLARIS_TOKEN` 和 service token。Skill fixture 不使用
 `cleanup.sh --delete-services` 清理。
 
-所有真实 E2E 场景创建的 Context 都会启用事件 Pushgateway，地址由
+所有真实 E2E 场景创建的非探测 Context 都会启用事件 Pushgateway，地址由
 `POLARIS_SERVER_ADDRESS` 的 host 加端口 `9091` 得到，上报路径为
 `/polaris/client/events`。各 demo 通过：
 
@@ -157,13 +157,22 @@ SDK 本身仍保持只读。
 - `POLARIS_EVENT_REPORTER_MAX_RETRIES=3`
 - `POLARIS_EVENT_REPORTER_RETRY_INTERVAL=100`
 
-统一应用配置。`POLARIS_EVENT_REPORTER_*` 是示例 E2E 辅助变量，不是 SDK 自动配置变量。
+集成启动器在创建示例 Context 前统一应用配置。场景结束后检查所有记录了初始化状态的
+非探测 Context：不得出现 `eventReporters=[]`，且至少一个 Context 显示
+`eventReporters=['PushGatewayEventReporter']`。日志级别为 warn/error 的 Context
+可能不输出这条 INFO 日志，但启动器仍会在创建 Context 前应用 Reporter 配置。
+`POLARIS_EVENT_REPORTER_*` 是示例 E2E 辅助变量，不是 SDK 自动配置变量。
+
+熔断等服务端可上报事件会实际检查 Pushgateway 成功日志。`OnServiceAdded`、
+`OnServiceUpdated` 和 `OnServiceDeleted` 属于本地缓存生命周期事件，SDK
+不会将它们发送到 Pushgateway；events 场景继续验证这些本地事件序列。
 
 每个场景的运行目录是
 `integration/.logs/<scenario>/verify-e2e-<时间>-<编号>/`。`console.log` 含验证器
 JSON，`result.json` 的 `exit_code` 为 0 才通过，`verification.log` 保存失败断言，
 `polaris/log/` 是探测 context 的 SDK 日志，demo 标准输出在
-`<子目录名>.stdout.log`。每次 suite 运行还会写一份 `integration/.logs/` 下的
+`<名称>.stdout.log`：`main.py` 使用 demo 子目录名，其他 Fixture 使用脚本名，
+例如 `provider.stdout.log` 和 `consumer.stdout.log`。每次 suite 运行还会写一份 `integration/.logs/` 下的
 `summary.json`。
 
 | 场景 | 远端实际检查 |

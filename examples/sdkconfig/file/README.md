@@ -8,7 +8,7 @@
 
 ```bash
 make -C examples run DEMO=sdkconfig/file
-make -C examples run DEMO=sdkconfig/file ARGS='--config "$PWD/examples/sdkconfig/file/polaris.yaml"'
+make -C examples run DEMO=sdkconfig/file ARGS="--config '$PWD/examples/sdkconfig/file/polaris.yaml'"
 make -C examples run DEMO=sdkconfig/file ARGS='--default'
 make -C examples run DEMO=sdkconfig/file ARGS='--no-env'
 ```
