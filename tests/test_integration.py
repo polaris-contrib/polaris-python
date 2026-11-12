@@ -144,7 +144,10 @@ def test_real_verification_requires_non_probe_event_reporters(tmp_path):
         "polaris engine initialized eventReporters=[] statReporter=PrometheusReporter\n",
         encoding="utf-8",
     )
-    with pytest.raises(RuntimeError, match="consumer/base"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"polaris/log/consumer/base/polaris\.log=\[\]",
+    ):
         assert_event_reporters_enabled(tmp_path)
 
 

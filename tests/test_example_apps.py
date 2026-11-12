@@ -125,6 +125,7 @@ def test_example_makefile_launcher_and_group_commands(example_apps):
         pytest.skip("Make is unavailable")
     shutil.copy(REPO / "examples/demo.mk", example_apps / "demo.mk")
     shutil.copy(REPO / "examples/group.mk", example_apps / "group.mk")
+    shutil.copy(REPO / "examples/_python.sh", example_apps / "_python.sh")
     (example_apps.parent / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
     directory = example_apps / "sdkconfig/code"
     (directory / "Makefile").write_text("include ../../demo.mk\n", encoding="utf-8")
@@ -142,6 +143,9 @@ def test_example_makefile_launcher_and_group_commands(example_apps):
 
     assert "demo" in execute(directory, "run", "ARGS=--value 'two words'")
     assert "demo" in execute(group, "run", "DEMO=code")
+    launcher = (directory / "bin").read_text(encoding="utf-8")
+    assert "_python.sh" in launcher
+    assert str(Path(sys.executable)) not in launcher
     assert "console.log" in execute(directory, "logs", "ARGS=--latest --tail 1")
     assert "Dry run" in execute(group, "cleanup", "ARGS=--only code --dry-run")
     assert (directory / "bin").exists()

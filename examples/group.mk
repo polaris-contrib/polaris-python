@@ -6,7 +6,7 @@ SUBDIRS ?=
 DEMO ?=
 
 REPO_ROOT := $(shell dir="$(CURDIR)"; while [ "$$dir" != "/" ] && [ ! -f "$$dir/pyproject.toml" ]; do dir=$$(dirname "$$dir"); done; printf '%s\n' "$$dir")
-EXAMPLES_PYTHON ?= $(if $(POLARIS_PYTHON),$(POLARIS_PYTHON),$(if $(wildcard $(REPO_ROOT)/.venv/bin/python),$(REPO_ROOT)/.venv/bin/python,$(UV) run --project "$(REPO_ROOT)" --locked python))
+EXAMPLES_PYTHON ?= sh "$(REPO_ROOT)/examples/_python.sh"
 
 .PHONY: build build-x86 package run logs cleanup clean
 

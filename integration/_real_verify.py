@@ -577,7 +577,7 @@ def assert_event_reporters_enabled(run):
     disabled = [path for path, state in states.items() if state != expected]
     if disabled:
         details = ", ".join(
-            f"{path.relative_to(run)}={states[path]}" for path in disabled
+            f"{path.relative_to(run).as_posix()}={states[path]}" for path in disabled
         )
         raise RuntimeError(f"non-probe Contexts did not enable event reporting: {details}")
     if not states:
