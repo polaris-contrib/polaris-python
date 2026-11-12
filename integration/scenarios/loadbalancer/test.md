@@ -8,6 +8,34 @@
 两个策略都同时验证异步 `async_get_one_instance()` 和同步 `get_one_instance()`，
 并在每次选择后上报一次调用结果。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线组运行 | 1 个 group runner + `random`、`wr` 两个场景 verifier 子进程。 |
+| random/wr | 每个 verifier 内运行真实 SDK context、负载均衡和结果上报，不启动 Provider 进程。 |
+| 远端 | 每个子场景为 1 个验证器 + 1 个 quickstart Provider + 1 个 loadbalancer demo 子进程；Provider 保留到 cleanup。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 random | `ns/svc` | 2 个 fake 实例 `8081`、`8082`，`127.0.0.1:8081/8082`，权重 99/1；不注册。 |
+| 离线 wr | `ns/svc` | 2 个 fake 实例 `8081`、`8082`，`127.0.0.1:8081/8082`，权重 25/75；不注册。 |
+| 远端 random | `polaris-python-integration/loadbalancer-random-provider-<时间>` | 1 个真实 Provider 实例，动态端口。 |
+| 远端 wr | `polaris-python-integration/loadbalancer-wr-provider-<时间>` | 1 个真实 Provider 实例，动态端口。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| ConsumerAPI → registry | 异步和同步发现两个 fake 实例，验证实例 ID、端口、权重和健康状态。 |
+| ConsumerAPI → load balancer | random 固定随机序列检查均匀选择；wr 通过真实加权插件选择。 |
+| ConsumerAPI → 调用结果仓库 | 每次选择上报一次，测试记录完整调用次数和实例 ID。 |
+| 远端 demo → Provider | 只做实例选择并上报，不发起业务 HTTP；检查 4 行 `host:` 包含真实 Provider host/port。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -95,7 +123,7 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 每个子场景单独注册一个 Provider：动态端口，host 是建连时的本机 IP，TTL 1 秒。等发现能看到该 instance id 后，demo 以次数 2、间隔 0 做 2 次异步选择和 2 次同步选择。通过条件都是输出里有 4 行 `host:`，并且含这次 Provider 的 host 和 port。`selected_calls` 为 4。
 
 不检查 40 次分布，也不要求 30/10 或 20/20。Provider 保持运行，验证器不反注册。服务名分别是
-`polaris-python-e2e-loadbalancer-random-<时间>` 和
-`polaris-python-e2e-loadbalancer-wr-<时间>`，命名空间默认 `python-integration`。日志位于
+`loadbalancer-random-provider-<时间>` 和
+`loadbalancer-wr-provider-<时间>`，命名空间默认 `polaris-python-integration`。日志位于
 `integration/.logs/loadbalancer/<子目录>/verify-e2e-<时间>-<编号>/`。
 `./integration/cleanup.sh --force` 停进程，`--delete-services` 删服务。

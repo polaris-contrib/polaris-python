@@ -12,6 +12,35 @@
 ./integration/verify.sh --only cache/restart
 ```
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线组运行 | 1 个 group runner + 2 个场景 verifier 子进程；expiry 和 restart 各占一个子进程。 |
+| expiry | verifier 内运行真实 SDK context、cache、扫描线程和 fake Discover；没有 Provider 子进程。 |
+| restart | restart verifier + `seed`、`sync`、`async` 三个短生命周期子进程；临时真实 gRPC 服务运行在 verifier 进程内。 |
+| 远端 | 每个子场景为 1 个 verifier + 1 个 quickstart Provider + 1 个 cache demo 子进程；Provider 保留到 cleanup。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 expiry | `ns/svc` | 只发现 `instance-1`，`127.0.0.1:8080`；不注册。 |
+| 离线 restart | `ns/svc` | 只发现 `instance-1`，`192.0.2.1:8080`；不注册。 |
+| 远端 expiry | `polaris-python-integration/cache-expiry-provider-<时间>` | 1 个 Provider 实例，host 为路由源 IP，动态端口，TTL 1 秒。 |
+| 远端 restart | `polaris-python-integration/cache-restart-provider-<时间>` | 1 个 Provider 实例，host 为路由源 IP，动态端口，TTL 1 秒。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| ConsumerAPI → Discover | expiry 首次加载后在闲置阈值后淘汰并重新发现；实例 ID 保持一致，Discover 流和备份可重建。 |
+| SDK transport → 临时 gRPC | restart 通过真实 transport 获取快照，SIGKILL 后验证临时文件、完整备份、revision 降级和远端 revision 更新。 |
+| cache demo → registry | 远端两个 demo 都用 `get_instances` 发现 Provider，断言返回 ID 与注册 ID 相同。 |
+| 服务之间 | 两个场景都不调用业务 HTTP；只验证发现缓存、备份和恢复链路。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -96,7 +125,10 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only expiry
 ```
 
-两个场景都先用 quickstart Provider 注册一个 TTL 1 秒的实例，动态端口，host 为建连时的本机 IP，并等到发现能看到该 instance id。Provider 保持运行，验证器不反注册。命名空间默认 `python-integration`。
+两个场景都先用 `cache-expiry-provider-*` 或 `cache-restart-provider-*`
+Provider 注册一个 TTL 1 秒的实例，动态端口，host 为建连时的本机 IP，并等到发现能看到
+该 instance id。Provider 保持运行，验证器不反注册。命名空间默认
+`polaris-python-integration`。
 
 expiry 把闲置阈值设为 5 秒，第一次发现后再等扫描周期，第二次发现的实例 ID 必须和第一次、以及注册 ID 相同。不关闭 Discover 流，也不删除磁盘备份。
 

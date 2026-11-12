@@ -4,6 +4,32 @@
 默认离线验证不访问外部注册中心；只有 specification RPC 被替换，SDK 配置、独立连接、
 owner loop、模型转换、分片组装、文件写队列、原子替换、读重试和销毁都使用真实实现。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；`skill/main.py`、首个 context、重启 context 和 fake Skill stub 均在同一进程内。 |
+| 远端 | 1 个验证器进程 + 1 个 `skill/main.py` 子进程；不启动实例服务或 Skill Server。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/agent` 仅作为 mounted-skill 发现目标；Skill 资源为 `ns/lookup:v1` | fake 快照提供 mounted service 实例；Skill 示例本身不注册实例。 |
+| 远端 | 无实例服务；读取 published Skill | 不创建实例。隔离命名空间为空时，验证器通过控制面创建并发布固定 Skill `polaris-python-e2e-skill-fixture`。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| SkillAPI → Skill Server | `GetSkill` 查询内容，`GetSkillList` 搜索，`DownloadSkill` 流式下载 ZIP。 |
+| ConsumerAPI → registry | 读取 mounted service 快照，从实例 metadata 解析挂载 Skill 版本。 |
+| 验证器 → 本地备份 | 断网后验证 mounted Skill 从 `SKILL.md` 和版本化 ZIP 备份恢复。 |
+| 验证器 → 控制面 | 远端自动发现无资源时创建 fixture，之后复用；不自动删除。 |
+| Skill → 业务实例 | 不向业务实例发起请求；Skill 与实例发现使用独立连接和地址。 |
+
 ## 脚本作用
 
 从仓库根目录执行 `./integration/verify.sh --only skill`。
@@ -62,7 +88,7 @@ Skill 地址默认由 `POLARIS_SERVER_ADDRESS` 的主机和端口 `8094` 组成�
 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖。`POLARIS_SKILL_NAME` 可省略，此时先调用只读
 `GetSkillList`，在 `POLARIS_SKILL_NAMESPACE` 中选择按名称排序的第一个已发布 Skill。
 未配置命名空间时：指定了 `POLARIS_SKILL_NAME` 则使用 `default`；未指定名称则沿用
-隔离的实例 E2E 命名空间（默认 `python-integration`），确保自动发现和 fixture 不进入
+隔离的实例 E2E 命名空间（默认 `polaris-python-integration`），确保自动发现和 fixture 不进入
 共享命名空间。`POLARIS_SKILL_VERSION` 可选。`POLARIS_SKILL_TOKEN` 未设置时，
 Skill 连接使用 `POLARIS_TOKEN`。`POLARIS_SERVICE_TOKEN` 与该只读场景无关。
 
@@ -74,7 +100,7 @@ fixture 保留下来，后续运行优先检查并复用，不自动删除。
 自动发现前的 `GetSkillList` 预检与后续示例使用同一组 E2E 连接、API、Skill 查询
 和下载超时。
 
-实例 E2E 命名空间固定为 `python-integration`，不得把
+实例 E2E 命名空间固定为 `polaris-python-integration`，不得把
 `POLARIS_E2E_NAMESPACE` 设为 `default`。Skill 资源使用独立的
 `POLARIS_SKILL_NAMESPACE`；未显式配置时，自动发现和 fixture 使用隔离的实例 E2E
 命名空间，只有指定了 `POLARIS_SKILL_NAME` 的只读场景才默认使用 `default`。不要把

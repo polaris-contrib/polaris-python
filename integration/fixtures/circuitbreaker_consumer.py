@@ -21,7 +21,12 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[2] / "src"), str(Path(__file__).resolve().parents[2])]
-from integration._support import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from integration._support import (
+    configure_e2e_event_reporting,
+    demo_backup_directory,
+    demo_log_options,
+    get_local_host,
+)
 
 import argparse
 import asyncio
@@ -39,7 +44,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
-from polaris import Configuration, create_consumer_by_config
+from polaris import Configuration, create_consumer_by_config, create_provider_by_config
+from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import CBStatusEnum, GetInstancesRequest, GetOneInstanceRequest, RetStatus, ServiceCallResult
 
 STATE_NAMES = {CBStatusEnum.Closed: "closed", CBStatusEnum.Open: "open", CBStatusEnum.HalfOpen: "half_open"}
@@ -181,6 +187,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--service", default="CircuitBreakerCallee")
+    parser.add_argument("--caller-service")
+    parser.add_argument("--service-token", default=os.getenv("POLARIS_SERVICE_TOKEN", ""))
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--call-timeout", type=float, default=2)
     parser.add_argument(
@@ -208,13 +216,60 @@ def main(argv=None):
         config,
         log_options=demo_log_options(__file__, component="consumer"),
     )
+    caller_provider = None
+    caller_registration = None
+    caller_host = None
+    caller_port = None
     try:
         caller = CircuitBreakerCaller(consumer, args.namespace, args.service, args.call_timeout)
         with running_caller(caller, port=args.port) as server:
-            print(json.dumps({"started": True, "port": server.server_address[1]}), flush=True)
+            result = {"started": True, "port": server.server_address[1]}
+            if args.caller_service:
+                caller_provider = create_provider_by_config(
+                    config,
+                    log_options=demo_log_options(
+                        __file__,
+                        component="caller-provider",
+                    ),
+                )
+                address = config.get_global().get_server_connector().get_addresses()[0]
+                caller_host = get_local_host(address)
+                caller_port = server.server_address[1]
+                caller_registration = caller_provider.register_instance(
+                    InstanceRegisterRequest(
+                        service=args.caller_service,
+                        service_token=args.service_token,
+                        namespace=args.namespace,
+                        host=caller_host,
+                        port=caller_port,
+                        protocol="http",
+                        ttl=3,
+                    )
+                )
+                result.update(
+                    caller_service=args.caller_service,
+                    caller_instance_id=caller_registration.instance_id,
+                    host=caller_host,
+                )
+            print(json.dumps(result), flush=True)
             stop.wait()
     finally:
-        consumer.destroy()
+        try:
+            if caller_provider is not None and caller_registration is not None:
+                caller_provider.deregister(
+                    InstanceDeRegisterRequest(
+                        args.caller_service,
+                        args.service_token,
+                        args.namespace,
+                        caller_host,
+                        caller_port,
+                        caller_registration.instance_id,
+                    )
+                )
+        finally:
+            if caller_provider is not None:
+                caller_provider.destroy()
+            consumer.destroy()
     return 0
 
 

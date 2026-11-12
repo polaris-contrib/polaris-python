@@ -4,6 +4,32 @@
 备份恢复实例资源。验证使用真实 gRPC transport、真实文件写入和真实子进程，
 不依赖外部注册中心。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个 restart verifier + `seed`、`sync`、`async` 三个子进程；临时 loopback gRPC 服务在 verifier 进程内。`seed` 在备份替换阶段被 SIGKILL。 |
+| 远端 | 1 个验证器进程 + 1 个 quickstart Provider 子进程 + 1 个 `cache/restart/main.py` 子进程；Provider 保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | 快照只有 1 个 `instance-1`，`192.0.2.1:8080`；不注册。 |
+| 远端 | `polaris-python-integration/cache-restart-provider-<时间>` | Provider 注册 1 个实例，host 为路由源 IP，动态端口，TTL 1 秒；demo 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| seed/sync/async → 临时 gRPC | 通过真实 transport 请求实例快照，验证正式备份和未完成 `.tmp` 文件行为。 |
+| 验证器 → child 进程 | 对 seed 注入 `SIGKILL`，检查子进程线程结束、半写文件忽略和锁释放。 |
+| sync/async → 备份 | 服务端停止时用不同备份年龄读取本地实例，保留原 revision，不误标远端已更新。 |
+| sync/async → 重启后的 gRPC | 服务端恢复后读取 `revision-live` 和远端实例。 |
+| 远端 demo → registry | 只做一次异步发现，核对实例 ID，并验证 `svc#ns#svc#*.json` 备份写入。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -106,7 +132,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only cache/restart
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-cache-restart-<年月日时分秒毫秒>`。demo 超时 30 秒。
+命名空间默认 `polaris-python-integration`。服务名是
+`cache-restart-provider-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
 步骤：
 

@@ -4,6 +4,32 @@
 `integration/scenarios/circuitbreaker` 的完整熔断验证。它会同时启动
 两个真实本机 HTTP Provider 和多个 Consumer，因此覆盖的不只是 Provider 启动。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；两个 Provider HTTP listener 是进程内任务，并各自使用真实 SDK context 注册。 |
+| 远端 | 跑父级完整场景：1 个验证器 + 1 个本 Provider 子进程 + 1 个 Consumer 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `default/CircuitBreakerCallee` | 2 个 Provider 实例，`127.0.0.1:<动态端口>`，ID `instance-<端口>`，TTL 1 秒。 |
+| 远端 | `polaris-python-integration/circuitbreaker-callee-<时间>` | 1 个 Provider 实例，host 为路由源 IP，动态端口，TTL 3 秒。 |
+| 远端 | `polaris-python-integration/circuitbreaker-caller-<时间>` | 1 个 Consumer 前端实例，用于形成双向可观察的 caller→callee 链路。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| Consumer → Provider `/echo` | Provider 返回可切换的 200/500 状态和请求 ID；Consumer 依据结果更新实例熔断。 |
+| 验证器 → Provider `/switch` | 在成功和失败之间切换，触发 `closed → open → half_open → closed`。 |
+| Provider → registry | 注册、心跳和反注册均被 fake registry 或真实 Polaris 检查。 |
+| SDK health/circuit subsystems | 关闭 Provider 后调用返回传输失败 `-1`，验证故障传播和清理。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -97,7 +123,9 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only circuitbreaker/provider
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>`。
+命名空间默认 `polaris-python-integration`。Provider 注册为
+`circuitbreaker-callee-<年月日时分秒毫秒>`；同一远端场景还会把 Consumer HTTP
+前端注册为 `circuitbreaker-caller-<年月日时分秒毫秒>`。
 
 步骤：
 
@@ -105,8 +133,11 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
    `get_local_host(POLARIS_SERVER_ADDRESS)` 取本机到 Polaris 的 TCP 源 IP。
    监听动态端口，然后把该 IP 和实际端口注册并持续心跳。
 2. 验证器最多等 20 秒，确认发现结果含这次的 instance id。
-3. Consumer 调用 `/echo`。因为 Provider 固定返回 200，熔断状态应保持 `closed`，`ret_code` 为 200。
-4. `/instances` 只有这一个实例。两个进程都保持运行，验证器不反注册，也不把状态切到 500。
+3. Consumer 注册 caller 实例并调用 callee 的 `/echo`。验证器会切换失败和恢复，
+   覆盖 `closed → open → half_open → closed`。
+4. `/instances` 只有 callee 的一个实例。caller 和 callee 两个进程都保持运行，
+   验证器不主动反注册。
 
-通过条件是 `circuit_state` 为 `closed`。离线里切换 HTTP 状态、半开和全死全活不在这一路。
+通过条件是最终 `circuit_state` 为 `closed`，且 caller、callee 两个服务实例都可发现。
+离线的多实例路由和错误率矩阵不在这一路重复。
 `./integration/cleanup.sh --force` 停进程，`--delete-services` 删服务。

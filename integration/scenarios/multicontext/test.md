@@ -3,6 +3,31 @@
 本目录验证两个独立 `SDKContext` 的注册、心跳、发现、缓存和日志隔离，以及销毁一个
 context 后另一个仍可继续工作。验证不访问外部注册中心。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 2 个进程：1 个验证器 + 1 个独立 runner 子进程；两个 SDKContext 在 runner 内并存。 |
+| 远端 | 2 个进程：1 个验证器 + 1 个 `multicontext/main.py` 子进程；进程保留到 cleanup。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `default/multicontext-example` | 2 个实例，分别由两个 context 注册：`first:8091`→`127.0.0.1:8081`，`second:8091`→`127.0.0.1:8082`。 |
+| 远端 | `polaris-python-integration/multicontext-provider-<时间>` | 同一服务下 2 个实例，端口 8081/8082，host 为路由源 IP。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| context 1/2 → 各自 registry channel | 注册、心跳、Discover 和反注册均使用独立 clientId、channel、cache 和日志。 |
+| context 1/2 → 同一服务 | 两个 context 异步与同步发现同一实例集合，比较结果一致。 |
+| 验证器 → runner JSON | 销毁第一个 context 后，第一个 API 必须拒绝访问，第二个仍可持续发现和工作。 |
+| 服务实例之间 | 不发起业务 HTTP；验证重点是同一服务下两个实例的独立生命周期和资源隔离。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -119,7 +144,9 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only multicontext
 ```
 
-脚本把 `POLARIS_FIRST_SERVER` 和 `POLARIS_SECOND_SERVER` 都设成这个地址，两份服务令牌和接入令牌也相同。命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-multicontext-<年月日时分秒毫秒>`。超时 30 秒。
+脚本把 `POLARIS_FIRST_SERVER` 和 `POLARIS_SECOND_SERVER` 都设成这个地址，两份服务令牌和
+接入令牌也相同。命名空间默认 `polaris-python-integration`。服务名是
+`multicontext-provider-<年月日时分秒毫秒>`。超时 30 秒。
 
 步骤：
 

@@ -3,6 +3,31 @@
 本目录验证 `random` 负载均衡器按实例数量均匀选择，不受实例权重影响。异步和同步 API
 全部使用真实 SDK 路径。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；SDK context、random 插件和结果上报均在进程内，无 Provider 进程。 |
+| 远端 | 1 个验证器进程 + 1 个 quickstart Provider 子进程 + 1 个 `loadbalancer/random/main.py` 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | 2 个 fake 实例：`8081` `127.0.0.1:8081` 权重 99，`8082` `127.0.0.1:8082` 权重 1；不注册。 |
+| 远端 | `polaris-python-integration/loadbalancer-random-provider-<时间>` | 1 个真实实例，host 为路由源 IP，动态端口，TTL 1 秒。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| ConsumerAPI → registry | 加载 fake 两实例快照并创建 random 负载均衡器。 |
+| ConsumerAPI → random plugin | 异步 40 次、同步 40 次选择；固定 randint 序列后两实例各 20 次。 |
+| ConsumerAPI → 调用结果仓库 | 每次选择上报一次，记录被选 instance ID 和同步/异步阶段。 |
+| 远端 demo → Provider | 异步 2 次、同步 2 次，检查输出包含真实 Provider host/port；不调用业务 HTTP。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -97,7 +122,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only loadbalancer/random
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-loadbalancer-random-<年月日时分秒毫秒>`。demo 超时 30 秒。
+命名空间默认 `polaris-python-integration`。服务名是
+`loadbalancer-random-provider-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
 步骤：
 

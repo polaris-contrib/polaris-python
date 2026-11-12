@@ -4,6 +4,33 @@
 资源销毁。验证保留真实 SDK、真实本机 HTTP 服务及真实定时器，只替换注册中心 gRPC
 stub，因此不依赖外部 Polaris。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；两个 Provider HTTP listener、Consumer HTTP listener 和 SDK context 均为进程内任务，不启动额外业务子进程。 |
+| 远端 | 1 个验证器进程 + 1 个 Provider 子进程 + 1 个 Consumer 子进程；两者在验证后保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `default/CircuitBreakerCallee` | 2 个 Provider 实例，`127.0.0.1:<动态端口>`，ID `instance-<端口>`，TTL 1 秒；Consumer 不注册。 |
+| 远端 | `polaris-python-integration/circuitbreaker-callee-<时间>` | 1 个 Provider 实例，host 为路由源 IP，动态端口，TTL 3 秒。 |
+| 远端 | `polaris-python-integration/circuitbreaker-caller-<时间>` | 1 个 Consumer HTTP 前端实例，host 为路由源 IP，动态端口。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| 验证器/Consumer → Provider | 通过 ConsumerAPI 发现 callee，向 `/echo`、`/switch` 等真实 HTTP 入口发起请求，并传播 request ID。 |
+| Consumer → 调用结果仓库 | 200/404/500、超时和传输失败都上报结果，驱动实例熔断状态机。 |
+| Consumer → load balancer | 故障实例打开后只路由健康实例；全开时验证全死全活兜底。 |
+| SDK event reporter → Pushgateway | Open、HalfOpen、Close 三个事件 POST 到 `<host>:9091/polaris/client/events`。 |
+| 验证器 → Consumer endpoints | 检查 `/instances`、熔断状态和最终恢复为 `closed`。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -128,16 +155,19 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only circuitbreaker
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>`。
+命名空间默认 `polaris-python-integration`。Provider 注册为
+`circuitbreaker-callee-<年月日时分秒毫秒>`，Consumer 的 HTTP 前端注册为
+`circuitbreaker-caller-<年月日时分秒毫秒>`。两个服务各有一个实例，端口均动态分配。
 
 步骤：
 
-1. 启动 Provider。`--port 0`，`--status 200`，`--ttl 3`。注册 host 通过
+1. 启动 Provider，在 callee 服务注册实例。`--port 0`，`--status 200`，`--ttl 3`。注册 host 通过
    `get_local_host(POLARIS_SERVER_ADDRESS)` 得到，必须是本机到 Polaris 的路由源 IP。
    初始返回 HTTP 200，进程保持运行并心跳。
 2. 每 0.5 秒用不带缓存的发现确认 instance id，最多 20 秒。
-3. Consumer 使用本次运行目录中的临时 YAML，把检查周期设为 `1s`、sleep window
-   设为 `2s`、连续失败阈值设为 3、半开成功阈值设为 2。
+3. Consumer 监听动态端口，并把该 HTTP 前端注册为 `circuitbreaker-caller-*` 实例。
+   使用本次运行目录中的临时 YAML，把检查周期设为 `1s`、sleep window 设为 `2s`、
+   连续失败阈值设为 3、半开成功阈值设为 2。
 4. 先确认实例为 `closed`，再通过 Provider 的 `/switch?openError=true` 返回 HTTP 500，
    连续触发 3 次失败。
 5. 等待本地熔断进入 `open`；sleep window 到期后等待进入 `half_open`。
@@ -148,6 +178,7 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
    的 `9091` 端口。
 
 通过条件是状态序列为 `closed → open → half_open → closed`，三个熔断事件都收到
-Pushgateway 2xx 响应。JSON 含 service、provider instance id、host、port、
-`consumer_port`、`circuit_states` 和 `reported_events`。
+Pushgateway 2xx 响应。JSON 的 `services` 分别包含 caller 和 callee 服务名，
+`caller` 与 `provider` 分别包含实例 ID、host 和端口，另含 `circuit_states`、
+`reported_events` 和 `consumer_port`。
 `./integration/cleanup.sh --force` 停进程，`--delete-services` 删服务。

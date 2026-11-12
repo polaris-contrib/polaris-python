@@ -390,7 +390,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", default=os.getenv("POLARIS_SERVER_ADDRESS", "127.0.0.1:8091"))
     parser.add_argument("--token", default=os.getenv("POLARIS_SERVICE_TOKEN", ""))
-    parser.add_argument("--namespace", default="python-integration")
+    parser.add_argument("--namespace", default="polaris-python-integration")
     parser.add_argument(
         "--registration-port", type=registration_port, default=1,
         help="Instance identity port; this is not the Agent listening port")

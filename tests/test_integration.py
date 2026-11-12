@@ -49,23 +49,65 @@ from polaris import Configuration
 REPO = Path(__file__).resolve().parents[1]
 
 
-def test_real_service_name_uses_the_full_demo_path():
+def test_real_service_name_uses_demo_path_provider_role_and_timestamp():
     before = datetime.now().strftime("%Y%m%d%H%M%S")
     name = service_name("cache/restart")
     after = datetime.now().strftime("%Y%m%d%H%M%S")
-    label, suffix = name.rsplit("-", 1)
-    assert label == "polaris-python-e2e-cache-restart"
+    label, role, suffix = name.rsplit("-", 2)
+    assert label == "cache-restart"
+    assert role == "provider"
     assert len(suffix) == 17 and suffix.isdigit()
     assert before <= suffix[:14] <= after
-    assert service_name("loadbalancer/wr").startswith("polaris-python-e2e-loadbalancer-wr-")
-    assert service_name("quickstart").startswith("polaris-python-e2e-quickstart-")
+    assert service_name("loadbalancer/wr").startswith("loadbalancer-wr-provider-")
+    assert service_name("quickstart").startswith("quickstart-provider-")
+    assert service_name("circuitbreaker", "caller").startswith(
+        "circuitbreaker-caller-"
+    )
+    assert service_name("circuitbreaker", "callee").startswith(
+        "circuitbreaker-callee-"
+    )
+    with pytest.raises(ValueError, match="unsupported E2E service role"):
+        service_name("quickstart", "consumer")
 
 
-def test_real_verification_registers_into_python_integration(monkeypatch):
+def test_e2e_service_name_accepts_known_roles_and_legacy_names():
+    timestamp = "20261112152634723"
+    assert runtime.is_e2e_service_name(
+        f"circuitbreaker-caller-{timestamp}",
+        "circuitbreaker",
+    )
+    assert runtime.is_e2e_service_name(
+        f"circuitbreaker-callee-{timestamp}",
+        "circuitbreaker",
+    )
+    assert runtime.is_e2e_service_name(
+        f"quickstart-provider-{timestamp}",
+        "quickstart",
+    )
+    assert runtime.is_e2e_service_name(
+        f"polaris-python-e2e-quickstart-{timestamp}",
+        "quickstart",
+    )
+    assert not runtime.is_e2e_service_name(
+        f"circuitbreaker-caller-{timestamp}",
+        "quickstart",
+    )
+    assert not runtime.is_e2e_service_name(
+        f"quickstart-consumer-{timestamp}",
+        "quickstart",
+    )
+
+
+def test_real_verification_registers_into_polaris_python_integration(monkeypatch):
     monkeypatch.delenv("POLARIS_E2E_NAMESPACE", raising=False)
-    assert e2e_namespace() == "python-integration"
+    assert e2e_namespace() == "polaris-python-integration"
+    assert manager.cleanup_namespaces() == [
+        "polaris-python-integration",
+        "python-integration",
+    ]
     monkeypatch.setenv("POLARIS_E2E_NAMESPACE", "custom")
     assert e2e_namespace() == "custom"
+    assert manager.cleanup_namespaces() == ["custom"]
     monkeypatch.setenv("POLARIS_E2E_NAMESPACE", "default")
     with pytest.raises(ValueError, match="must not be default"):
         e2e_namespace()
@@ -93,13 +135,14 @@ def test_skill_address_is_derived_from_registry_host():
 
 
 def test_skill_namespace_defaults_to_isolated_namespace_for_auto_discovery():
-    assert resolve_skill_namespace("python-integration") == "python-integration"
-    assert resolve_skill_namespace("python-integration", configured_name="published") == "default"
+    namespace = "polaris-python-integration"
+    assert resolve_skill_namespace(namespace) == namespace
+    assert resolve_skill_namespace(namespace, configured_name="published") == "default"
     assert resolve_skill_namespace(
-        "python-integration", configured_name="published", configured_namespace="custom",
+        namespace, configured_name="published", configured_namespace="custom",
     ) == "custom"
     assert resolve_skill_namespace(
-        "python-integration", configured_namespace="custom",
+        namespace, configured_namespace="custom",
     ) == "custom"
 
 
@@ -1120,7 +1163,7 @@ def test_demo_default_or_verifier_paths_cover_synchronous_apis(relative_path, ca
 
 
 def test_restart_backup_glob_matches_svc_cache_files(tmp_path):
-    service = "polaris-python-e2e-cache-restart-53e071ea"
+    service = "cache-restart-provider-20261112152634723"
     (tmp_path / f"svc#default#{service}#instance.json").write_text("{}", encoding="utf-8")
     assert any(tmp_path.glob(cache_backup_glob("default", service)))
 
@@ -1150,6 +1193,24 @@ def test_scenario_documentation_describes_verification(name):
     assert "POLARIS_SERVICE_TOKEN" in documentation_text
     if name:
         assert not list(directory.glob("*.sh"))
+
+
+def test_all_integration_docs_describe_process_service_and_access_topology():
+    documents = sorted((REPO / "integration").rglob("test.md"))
+    assert documents
+    required_sections = (
+        "## 测试拓扑",
+        "### 拉起进程",
+        "| 阶段 | 进程与生命周期 |",
+        "### 创建服务与实例",
+        "| 阶段 | 服务 | 实例 |",
+        "### 服务访问与验证",
+        "| 访问关系 | 验证内容 |",
+    )
+    for documentation in documents:
+        text = documentation.read_text(encoding="utf-8")
+        missing = [section for section in required_sections if section not in text]
+        assert not missing, f"{documentation.relative_to(REPO)} is missing {missing}"
 
 
 def test_example_registry_matches_makefile_and_scenario_files():
@@ -1234,14 +1295,16 @@ def test_integration_cleanup_scope_does_not_expand_to_all_scenarios(
 
     monkeypatch.setattr(
         manager,
-        "test_services",
+        "test_services_for_cleanup",
         lambda: (
             "http://127.0.0.1:8090",
-            "python-integration",
-            [
-                "polaris-python-e2e-a2a-1",
-                "polaris-python-e2e-mcp-2",
-            ],
+            {
+                "polaris-python-integration": [
+                    "a2a-provider-20261112152634723",
+                    "polaris-python-e2e-a2a-20261112152634723",
+                    "mcp-provider-20261112152634724",
+                ],
+            },
         ),
     )
 
@@ -1261,7 +1324,10 @@ def test_integration_cleanup_scope_does_not_expand_to_all_scenarios(
             delete_services=True,
         ),
     ) == 0
-    assert deleted == ["polaris-python-e2e-a2a-1"]
+    assert deleted == [
+        "a2a-provider-20261112152634723",
+        "polaris-python-e2e-a2a-20261112152634723",
+    ]
     assert not a2a_logs.exists()
     assert (mcp_logs / "console.log").read_text(encoding="utf-8") == "unrelated"
 
@@ -1312,9 +1378,22 @@ def test_cleanup_delete_services_targets_only_e2e_services(monkeypatch):
             body = {
                 "code": 200000,
                 "services": [
-                    {"namespace": "python-integration", "name": "polaris-python-e2e-quickstart-1"},
-                    {"namespace": "python-integration", "name": "polaris-python-e2e-mcp-2"},
-                    {"namespace": "python-integration", "name": "business-service"},
+                    {
+                        "namespace": "polaris-python-integration",
+                        "name": "quickstart-provider-20261112152634723",
+                    },
+                    {
+                        "namespace": "polaris-python-integration",
+                        "name": "polaris-python-e2e-quickstart-20261112152634723",
+                    },
+                    {
+                        "namespace": "polaris-python-integration",
+                        "name": "mcp-provider-20261112152634724",
+                    },
+                    {
+                        "namespace": "polaris-python-integration",
+                        "name": "business-service",
+                    },
                     {"namespace": "other", "name": "polaris-python-e2e-not-selected"},
                 ],
             }
@@ -1327,8 +1406,12 @@ def test_cleanup_delete_services_targets_only_e2e_services(monkeypatch):
     monkeypatch.setenv("POLARIS_SERVICE_TOKEN", "service-token")
     address, namespace, names = manager.test_services()
     assert address == "http://1.2.3.4:8090"
-    assert namespace == "python-integration"
-    assert names == ["polaris-python-e2e-quickstart-1", "polaris-python-e2e-mcp-2"]
+    assert namespace == "polaris-python-integration"
+    assert names == [
+        "quickstart-provider-20261112152634723",
+        "polaris-python-e2e-quickstart-20261112152634723",
+        "mcp-provider-20261112152634724",
+    ]
 
     assert manager.delete_test_services(address, namespace, names) == names
     assert calls[1].full_url == f"{address}/naming/v1/services/delete"

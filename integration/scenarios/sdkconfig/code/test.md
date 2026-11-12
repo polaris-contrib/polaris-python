@@ -3,6 +3,31 @@
 本目录验证完全由代码构造 `Configuration` 的启动路径。验证检查配置生效值、
 三个 API 共用 context、context 销毁，以及纯代码模式不读取文件或环境变量。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个 code verifier + 每个 case 1 个 demo 子进程；两个 case 顺序运行，子进程结束后 verifier 检查 JSON。 |
+| 远端 | 1 个验证器 + 1 个 quickstart Provider 子进程 + 1 个 `sdkconfig/code/main.py` 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | 无 | 不注册业务服务，不创建实例；仅创建 SDK context 并发送 `ReportClient`。 |
+| 远端 | `polaris-python-integration/sdkconfig-code-provider-<时间>` | Provider 1 个实例，host 为路由源 IP，动态端口；code demo 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| verifier → code child | 检查退出码和最后一行 JSON 中的代码配置、超时、重试、bind IP、cache 和熔断参数。 |
+| demo ConsumerAPI → registry | 使用代码中的地址创建 context；远端在指定 namespace/service 上执行实例发现。 |
+| demo → Provider 服务 | 只比较发现结果第一个 instance ID 与远端 Provider 注册 ID，不发起业务 HTTP。 |
+| 预期失败 case | 损坏 YAML、非法环境变量不会影响纯代码配置；进程必须在预期位置成功或失败。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -94,7 +119,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only sdkconfig/code
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-sdkconfig-code-<年月日时分秒毫秒>`。demo 超时 30 秒。
+命名空间默认 `polaris-python-integration`。服务名是
+`sdkconfig-code-provider-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
 步骤：
 

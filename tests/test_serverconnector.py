@@ -330,6 +330,8 @@ async def test_report_client_success_logs_to_base_category(tmp_path):
         assert '"location"' in base
         assert "secret-token" not in base
         assert "secret-token" not in network
+        assert "[connection.py:" in base_line
+        assert "[connection.py:" in network_line
         assert "[INFO]" in base_line
         assert "[DEBUG]" in network_line
     finally:

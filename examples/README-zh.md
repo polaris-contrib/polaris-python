@@ -22,7 +22,7 @@
 | [servicerouter](servicerouter/README.md) | 路由链 |
 | [multicontext](multicontext/README.md) | 独立 Context 和生命周期 |
 | [mcp](mcp/README-zh.md) | MCP 注册和发现 |
-| [a2a](a2a/README-zh.md) | A2A metadata |
+| [a2a](a2a/README-zh.md) | A2A Provider，提供 JSON-RPC 1.0/0.3 和 HTTP+JSON |
 | [skill](skill/README-zh.md) | Skill 查询和下载 |
 | [monitoring](monitoring/README-zh.md) | Prometheus pull / push |
 | [events](events/README-zh.md) | 缓存与本地熔断事件 |

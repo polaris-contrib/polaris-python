@@ -1,5 +1,31 @@
 # monitoring 测试说明
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；pull、push 两次 demo 顺序在进程内运行，本机 echo listener 和 Pushgateway 接收器也在进程内。 |
+| 远端 | 1 个验证器进程 + 1 个 `monitoring/main.py` 子进程；成功后子进程保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/echo` | 每个模式启动并注册 1 个 echo 实例，`127.0.0.1:<动态端口>`，TTL 5 秒。 |
+| 远端 | `polaris-python-integration/monitoring-provider-<时间>` | 1 个 echo 实例，host 为路由源 IP，动态端口，TTL 5 秒。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| demo Consumer → demo Provider | 通过 Discover 找到自身实例，真实请求 `/echo` 三次，状态依次 200、503、200。 |
+| demo → 调用结果仓库 | 每次 HTTP 调用后上报 ret_code、成功/失败、延迟和 `callee_method=/echo`。 |
+| 验证器 → Prometheus pull | 请求真实 `/metric`，检查 `/echo` 标签和 3 次调用、2 次成功聚合。 |
+| SDK stat reporter → Pushgateway | POST `/metrics/job/polaris-client/instance/<clientId>`，验证 payload。 |
+| 停止信号 → demo 生命周期 | 注册、发现、调用和聚合等待期间收到停止信号都进入反注册、context 销毁和 listener 清理。 |
+
 ## 脚本作用
 
 本目录通过 `integration/fixtures/monitoring.py` 验证完整客户端流程，公开示例只保留
@@ -51,7 +77,9 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only monitoring
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-monitoring-<年月日时分秒毫秒>`。脚本把 Pushgateway 设为 `<host>:9091`，超时 90 秒。`POLARIS_TOKEN` 只放进 SDK 连接，服务令牌放进注册请求。
+命名空间默认 `polaris-python-integration`。服务名是
+`monitoring-provider-<年月日时分秒毫秒>`。脚本把 Pushgateway 设为 `<host>:9091`，
+超时 90 秒。`POLARIS_TOKEN` 只放进 SDK 连接，服务令牌放进注册请求。
 
 步骤：
 
@@ -74,5 +102,5 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 运行目录是 `integration/.logs/monitoring/verify-e2e-<时间>-<编号>/`。`console.log` 里有验证器 JSON，
 `monitoring.stdout.log` 是示例输出，`result.json` 的 `exit_code` 为 0 才通过。
 成功后进程和实例继续运行；用 `./integration/cleanup.sh --force --delete-services`
-停止进程、优雅反注册并删除 `polaris-python-e2e-` 前缀的服务。注册后一直发现不到
+停止进程、优雅反注册并删除 `monitoring-provider-*` 服务。注册后一直发现不到
 实例或 Pushgateway 非 2xx 都会非零退出。

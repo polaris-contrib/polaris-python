@@ -2,28 +2,65 @@
 
 [中文](README-zh.md)
 
-This example uses ordinary Provider/Consumer APIs to register an already-running
-agent endpoint, discover its Instance and decode the JSON card carried in metadata.
-It does not provide an A2A SDK, fetch a remote AgentCard or invoke an agent.
+This example starts a real local A2A Provider, generates an instance-level
+AgentCard from the bound host and port, registers one ordinary Polaris Instance,
+then discovers and validates the same Instance and card. It provides three
+callable interfaces:
 
-Register an existing endpoint explicitly from the repository root:
+| Interface | Path | Message binding |
+| --- | --- | --- |
+| A2A JSON-RPC 1.0 | `/a2a/v1` | `message/send` |
+| A2A JSON-RPC 0.3 | `/a2a/legacy` | `message/send` |
+| A2A HTTP+JSON 1.0 | `/rest` | message-send JSON body |
+
+All three interfaces use the same IP and listening port, proving that multiple
+transports remain in one AgentCard and produce one Polaris instance. The card is
+also available at `/.well-known/agent-card.json`.
+
+Start and register the generated Provider from the repository root:
 
 ```bash
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
-  make -C examples run DEMO=a2a ARGS="--namespace default --card '$PWD/examples/a2a/agent-card.json'"
+  make -C examples run DEMO=a2a ARGS="--namespace default --duration 60"
 ```
 
-One AgentCard registers one instance. The example uses the first advertised interface:
-`service` comes from `AgentCard.name`, `host` comes from that URL, `version` comes from
-`AgentCard.version`, and `protocol` is empty. The instance identity port defaults to
-`registration_port=1`; use `--registration-port` when separate versions need to coexist.
+The process binds `--host` and `--port` (default `127.0.0.1:0`), rewrites the
+three canonical interfaces to the actual address, and prints the callable
+endpoints. One AgentCard registers one instance: `service` comes from
+`AgentCard.name`, `host` comes from the interfaces, `version` comes from
+`AgentCard.version`, and `protocol` stays empty. The instance identity port
+defaults to `registration_port=1`; use `--registration-port` when separate
+versions need to coexist.
+
+Invoke the JSON-RPC 1.0 interface:
+
+```bash
+curl -sS http://127.0.0.1:<业务端口>/a2a/v1 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
+```
+
+JSON-RPC 0.3 uses the same method at `/a2a/legacy`, with legacy text parts:
+
+```json
+{"role":"user","parts":[{"type":"text","text":"hello"}]}
+```
+
+HTTP+JSON 1.0 accepts the message directly at `/rest`:
+
+```json
+{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}
+```
+
+Use `--no-serve` to register an already-running external Agent. In that mode the
+card is used as-is and the example does not bind or serve the three interfaces.
 
 Multi-port grouping, mixed-schema validation and peer-instance selection are integration
 fixture behavior and are not repeated in this example.
 
-The included `agent-card.json` is an A2A 1.0 card with two interfaces on
-`127.0.0.1`. Replace its URLs with the Agent's real IP and ports. Select a 0.3 legacy
-card explicitly with `--a2a-version 0.3`.
+The included `agent-card.json` is an A2A 1.0 card with the three canonical
+interfaces on `127.0.0.1:8080`. `--serve` replaces those URLs with the actual
+bound host and port. Select the 0.3 card schema with `--a2a-version 0.3`.
 
 Application metadata contains the required keys `ai-agent-name`, `ai-agent-card`, and
 `ai-a2a-version`. Discovery may also include server-managed `region`, `zone`, `campus`,

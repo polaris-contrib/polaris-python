@@ -18,8 +18,10 @@ POLARIS_SERVICE_TOKEN=service-token \
 `mcp-streamable-http` or `mcp-sse`; `--path` defaults to `/mcp` or `/sse`, respectively.
 Version and protocol version have separate options; `--ttl` controls heartbeat seconds.
 Capability assembly, URL formatting and exit deregistration use ordinary SDK APIs,
-not a dedicated MCP API. SDK discovery uses ordinary routing. Compatibility matrices,
-retry boundaries and failure paths are covered by the integration fixture.
+not a dedicated MCP API. SDK discovery uses ordinary routing. After contract
+report, the example retries temporary `400202 NotFoundResource` responses every
+0.2 seconds until `--timeout`; other contract errors fail immediately. Broader
+compatibility matrices and failure paths are covered by the integration fixture.
 Context destruction does not implicitly deregister instances.
 See [AI registry APIs](../../docs/guides/ai-registry.md) for the full API and lifecycle behavior.
 

@@ -26,7 +26,7 @@ environment flags.
 | [servicerouter](servicerouter/README.md) | Router chains |
 | [multicontext](multicontext/README.md) | Independent contexts and lifecycle |
 | [mcp](mcp/README.md) | MCP registration and discovery |
-| [a2a](a2a/README.md) | A2A metadata |
+| [a2a](a2a/README.md) | A2A Provider with JSON-RPC 1.0/0.3 and HTTP+JSON |
 | [skill](skill/README.md) | Skill query and download |
 | [monitoring](monitoring/README.md) | Prometheus pull and push |
 | [events](events/README.md) | Cache and circuit-breaker events |

@@ -1,5 +1,33 @@
 # Integration E2E 测试说明
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 suite | 1 个 suite runner；每个选中场景启动 1 个 verifier 子进程。场景内部再按需启动 Provider、Consumer、worker 或 restart 子进程。 |
+| 远端 suite | 1 个 suite runner；每个场景启动 1 个 `_real_verify.py` 子进程，再启动该场景的 demo/Provider/Consumer 子进程。 |
+| 进程内服务 | fake gRPC stub、本地 aiohttp listener、Pushgateway 接收器通常运行在 verifier 进程内，不计为独立 OS 进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | 场景专用本地服务，如 `ns/svc`、`ns/echo`、`default/CircuitBreakerCallee` | 由 fake registry 或本机 listener 提供；多数场景不向真实 Polaris 注册。 |
+| 远端 | `polaris-python-integration/<scenario>-<role>-<17位时间戳>` | Provider/caller/callee 通常各 1 个；circuitbreaker 为 caller + callee，multicontext 为同一服务下 2 个实例。 |
+| 只读场景 | `skill` 不创建实例服务 | 读取 published Skill；必要时创建并保留 `polaris-python-e2e-skill-fixture` 资源。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| suite runner → scenario verifier | 通过子进程退出码、超时、中断标记和 JSON 结果判断场景是否通过。 |
+| Consumer → Provider | quickstart、circuitbreaker、lossless 等场景通过 Discover 获取实例，再发起真实 HTTP 调用。 |
+| SDK → Polaris | 验证注册、心跳、反注册、Discover、服务契约、Skill 读取和 ReportClient。 |
+| SDK → 本地观测设施 | 验证 cache 文件、事件中心、统计上报、Pushgateway、Prometheus 指标和日志分类。 |
+| 场景之间 | 使用独立运行目录、动态端口和隔离命名空间；cleanup 只处理本场景拥有的进程、日志、运行时文件和服务。 |
+
 ## 脚本作用
 
 从仓库根目录执行：
@@ -76,7 +104,11 @@ integration/.logs/verify-summary-<时间>-<编号>/summary.json
 ## 注册服务与实例
 
 离线 Fixture 的服务和实例均由本地 fake RPC 或本机 HTTP 服务提供，不访问外部注册中心。
-真实场景默认使用 python-integration 命名空间和 `polaris-python-e2e-<场景>-<时间>` 服务名；
+真实场景默认使用 `polaris-python-integration` 命名空间。服务名按实际注册角色采用
+`<场景>-<角色>-<17位时间戳>`，角色为 `provider`、`caller` 或 `callee`。例如
+`quickstart-provider-20261112152634723`；有主调和被调关系时分别使用
+`circuitbreaker-caller-20261112152634723` 和
+`circuitbreaker-callee-20261112152634723`；
 需要固定服务名的示例会在各自 test.md 中说明。所有本机 HTTP 和监控端口均使用动态端口，
 避免并行验证冲突。
 
@@ -131,7 +163,7 @@ export POLARIS_TOKEN=<sdk-token>               # 连接层鉴权时才需要
 脚本自己设置内部标记 `POLARIS_E2E=1`，并把 `POLARIS_SERVER`、
 `POLARIS_SERVER_ADDRESSES` 写成同一个地址。用户只需要提供真实注册中心地址和
 可选凭据。
-测试实例和测试服务固定进入 `python-integration`；`POLARIS_E2E_NAMESPACE` 只能覆盖为
+测试实例和测试服务固定进入 `polaris-python-integration`；`POLARIS_E2E_NAMESPACE` 只能覆盖为
 其他隔离命名空间，不能设为共享的 `default`。监控推送把该主机端口改成 `9091`。
 Skill 资源命名空间与实例命名空间相互独立。Skill 地址默认取注册中心主机与 `8094`
 端口，可用 `POLARIS_SKILL_SERVER_ADDRESS` 覆盖。未配置
@@ -178,7 +210,7 @@ JSON，`result.json` 的 `exit_code` 为 0 才通过，`verification.log` 保存
 | 场景 | 远端实际检查 |
 | --- | --- |
 | quickstart | 注册 TTL 1 秒的 HTTP Provider，Consumer `GET /echo` 返回 200 且正文含服务名。两个进程保持运行，不在验证器里反注册 |
-| circuitbreaker | 注册 Provider 后真实触发失败、恢复：验证 `closed → open → half_open → closed`，并要求 Open、HalfOpen、Close 三个事件均成功上报到 `<host>:9091/polaris/client/events` |
+| circuitbreaker | 注册 `circuitbreaker-callee-*` Provider 和 `circuitbreaker-caller-*` Consumer 实例，真实触发失败、恢复：验证 `closed → open → half_open → closed`，并要求 Open、HalfOpen、Close 三个事件均成功上报到 `<host>:9091/polaris/client/events` |
 | sdkconfig/code、file | 各注册一个 Provider，再用对应配置发现它，断言第一个实例 ID 相同。不重跑离线的 YAML 矩阵 |
 | cache/expiry | 发现后按 5 秒闲置阈值等待并再次发现，前后实例 ID 相同。不关 Discover 流，不删磁盘备份 |
 | cache/restart | 发现一次并确认 `svc#命名空间#服务#*.json` 已写入。不模拟进程被杀或注册中心中断 |
@@ -187,11 +219,16 @@ JSON，`result.json` 的 `exit_code` 为 0 才通过，`verification.log` 保存
 | multicontext | 两个 context 注册两个实例，clientId 不同，销毁第一个后第二个仍可见。进程保持运行 |
 | mcp | 注册普通 Instance，契约含 lookup、document、summarize，进程保持运行 |
 | skill | 查询并下载已发布 Skill；名称未提供时发现或创建并保留固定 fixture，后续运行优先复用，输出含 `zip_size` |
-| a2a | 注册 card metadata，发现结果 `transport` 为 `JSONRPC`，进程退出前反注册 |
+| a2a | 在动态端口提供 JSON-RPC 1.0、JSON-RPC 0.3 和 HTTP+JSON 1.0，注册一个实例并实际调用三个接口 |
 | monitoring | 本机 echo 三次调用 200、503、200，指标推到 `<host>:9091`，`calls=3` 且 `pushes>=1`，然后反注册 |
 | events | 注册唯一 Provider，再使用真实注册中心发现并断言 `OnServiceAdded`；Provider 保持运行 |
 
-需要先注册再发现的场景，用 quickstart Provider 注册，然后每 0.5 秒用不带缓存的发现探测，最多 20 秒。服务对象留在 Polaris 上。`./integration/cleanup.sh --force` 停止仍在运行的 demo 进程；`--delete-services` 只删除当前命名空间里 `polaris-python-e2e-` 前缀的服务。各场景的逐步说明在 `integration/scenarios/<scenario>/test.md`。
+需要先注册再发现的场景，用 quickstart Provider 注册，然后每 0.5 秒用不带缓存的发现探测，
+最多 20 秒。服务对象留在 Polaris 上。`./integration/cleanup.sh --force` 停止仍在运行的
+demo 进程；`--delete-services` 只删除当前命名空间里符合
+`<场景>-<provider|caller|callee>-<17位时间戳>` 的服务，并兼容识别迁移前的
+`polaris-python-e2e-<场景>-<17位时间戳>` 服务。各场景的逐步说明在
+`integration/scenarios/<scenario>/test.md`。
 
 真实实例的注册 IP 统一通过 `get_local_host(POLARIS_SERVER_ADDRESS)` 获取，即本机
 连接到 Polaris 时 TCP socket 的源地址。验证器会把这个结果与 demo JSON、Provider

@@ -4,6 +4,31 @@
 本机 HTTP 往返。虽然脚本位于 Provider 目录，`verify.py` 属于父目录
 `examples/quickstart`，因此结果会同时覆盖 Provider 和 Consumer。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 3 个进程：1 个验证器 + 本 Provider 子进程 + 父目录 Consumer 子进程；结束时发送停止信号。 |
+| 远端 | 3 个进程：1 个验证器 + 本 Provider 子进程 + Consumer 子进程；验证后两者保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | 1 个 Provider 实例，`127.0.0.1:<动态端口>`，fake ID `quickstart-provider`，TTL 1 秒；Consumer 不注册。 |
+| 远端 | `polaris-python-integration/quickstart-provider-<时间>` | 1 个 Provider 实例，host 为路由源 IP，动态端口，TTL 1 秒。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| Provider → registry | 注册实例、启动心跳、收到 SIGTERM 时反注册。 |
+| 验证器 → Provider HTTP | 通过 Consumer 间接请求 `/echo` 与 `/echo-with-body`，检查路径和正文。 |
+| Consumer → registry/Provider | Consumer 先发现 Provider host/port，再发起真实 HTTP 请求并上报调用结果。 |
+| 验证器 → Provider 输出 | 检查注册 host、端口、instance ID 和进程存活状态。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -106,7 +131,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only quickstart/provider
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-quickstart-<年月日时分秒毫秒>`。
+命名空间默认 `polaris-python-integration`。服务名是
+`quickstart-provider-<年月日时分秒毫秒>`。
 
 步骤：
 

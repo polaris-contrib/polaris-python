@@ -13,6 +13,33 @@
 ./integration/verify.sh --only sdkconfig/code,sdkconfig/file
 ```
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线组运行 | 1 个 group runner + `code`、`file` 两个场景 verifier 子进程。 |
+| code/file verifier | 每个 case 启动 1 个短生命周期 demo 子进程，解析 JSON 后退出；失败 case 也以预期退出码结束。 |
+| 远端 | 每个子场景为 1 个验证器 + 1 个 quickstart Provider + 1 个配置 demo 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 code/file | 无 | 不注册业务服务，不创建实例；只创建 SDK context 并执行 `ReportClient`/地址探测。 |
+| 远端 code | `polaris-python-integration/sdkconfig-code-provider-<时间>` | 1 个 Provider 实例；code demo 不注册，只发现。 |
+| 远端 file | `polaris-python-integration/sdkconfig-file-provider-<时间>` | 1 个 Provider 实例；file demo 不注册，只发现。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| demo → registry | 离线只验证配置启动、IP 探测和 client report；远端通过配置连接真实 Polaris。 |
+| demo ConsumerAPI → Provider 服务 | code 用代码地址，file 用 YAML + 环境变量覆盖，分别发现 Provider 实例。 |
+| 验证器 → Provider registry | 先等待 Provider instance ID 可发现，再要求 demo JSON 的第一个实例 ID 与注册 ID 相同。 |
+| 服务之间 | 不发起业务 HTTP；验证点是配置来源、地址覆盖和实例发现结果。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -120,8 +147,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 - file 不传 `--server`，读 `file/polaris.yaml`，由环境变量 `POLARIS_SERVER_ADDRESS` 覆盖地址，超时同样 5000 毫秒。
 
 两边都只断言发现结果的第一个实例 ID 等于刚注册的 ID。两个场景的服务名不同，分别是
-`polaris-python-e2e-sdkconfig-code-<时间>` 和
-`polaris-python-e2e-sdkconfig-file-<时间>`，命名空间默认 `python-integration`。
+`sdkconfig-code-provider-<时间>` 和
+`sdkconfig-file-provider-<时间>`，命名空间默认 `polaris-python-integration`。
 Provider 保持运行，验证器不反注册。日志位于
 `integration/.logs/sdkconfig/<子目录>/verify-e2e-<时间>-<编号>/`。
 `./integration/cleanup.sh --force` 停进程，`--delete-services` 删服务。

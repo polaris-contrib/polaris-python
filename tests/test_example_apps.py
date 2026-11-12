@@ -25,6 +25,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import psutil
 import pytest
@@ -234,6 +235,125 @@ def test_example_make_commands_expand_pwd_before_make():
                 assert "ARGS='" not in line, path
 
 
+def test_mcp_example_retries_temporarily_missing_contract(
+    tmp_path, monkeypatch, capsys,
+):
+    from examples.mcp import main as example
+    from polaris.pkg.model.error import ErrorCode, SDKError, ServerCode
+
+    calls = []
+    contract_reads = 0
+    registered = {}
+
+    def register(request):
+        calls.append("register")
+        registered["request"] = request
+        return SimpleNamespace(instance_id="registered-instance")
+
+    def report_contract(_contract):
+        calls.append("report")
+
+    def deregister(_request):
+        calls.append("deregister")
+
+    selected = SimpleNamespace(
+        get_id=lambda: "registered-instance",
+        get_host=lambda: "127.0.0.1",
+        get_port=lambda: 18080,
+        get_protocol=lambda: "mcp-streamable-http",
+        get_metadata=lambda: {"mcp-endpoint-path": "/mcp"},
+    )
+
+    def get_contract(_request):
+        nonlocal contract_reads
+        contract_reads += 1
+        calls.append("contract")
+        if contract_reads == 1:
+            raise SDKError(
+                ErrorCode.ErrCodeServerError,
+                "not found resource",
+                server_code=ServerCode.NotFoundResource,
+            )
+        return SimpleNamespace(service_features=[
+            SimpleNamespace(name="lookup"),
+            SimpleNamespace(name="document"),
+            SimpleNamespace(name="summarize"),
+        ])
+
+    class Context:
+        @staticmethod
+        def destroy():
+            calls.append("destroy")
+
+    provider = SimpleNamespace(
+        register_instance=register,
+        report_service_contract=report_contract,
+        deregister=deregister,
+    )
+    consumer = SimpleNamespace(
+        get_all_instances=lambda _request: SimpleNamespace(instances=[selected]),
+        get_service_contract=get_contract,
+    )
+    args = SimpleNamespace(
+        namespace="ns",
+        service="mcp",
+        token="token",
+        server="offline:8091",
+        host="127.0.0.1",
+        port=18080,
+        protocol="mcp-streamable-http",
+        protocol_version="2025-06-18",
+        version="v1",
+        path="",
+        ttl=1,
+        timeout=500,
+        keep_running=False,
+    )
+
+    monkeypatch.setattr(example.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(example.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(example, "demo_backup_directory", lambda *_: tmp_path)
+    monkeypatch.setattr(example, "demo_log_options", lambda *_: None)
+    monkeypatch.setattr(example, "init_context_by_config", lambda *_args, **_kwargs: Context())
+    monkeypatch.setattr(example, "ProviderAPI", lambda _context: provider)
+    monkeypatch.setattr(example, "ConsumerAPI", lambda _context: consumer)
+
+    example.run(args)
+
+    assert calls == [
+        "register", "report", "contract", "contract", "deregister", "destroy",
+    ]
+    assert registered["request"].protocol == "mcp-streamable-http"
+    result = json.loads(capsys.readouterr().out)
+    assert result["features"] == ["lookup", "document", "summarize"]
+
+
+def test_mcp_example_does_not_retry_other_contract_errors(monkeypatch):
+    from examples.mcp import main as example
+    from polaris.pkg.model.contract import GetServiceContractRequest
+    from polaris.pkg.model.error import ErrorCode, SDKError, ServerCode
+
+    calls = []
+
+    def get_contract(_request):
+        calls.append("contract")
+        raise SDKError(
+            ErrorCode.ErrCodeServerError,
+            "not found service",
+            server_code=ServerCode.NotFoundService,
+        )
+
+    monkeypatch.setattr(example.time, "sleep", lambda _seconds: pytest.fail("must not retry"))
+    request = GetServiceContractRequest("ns", "mcp", timeout=500)
+    with pytest.raises(SDKError, match="not found service"):
+        example.wait_for_contract(
+            SimpleNamespace(get_service_contract=get_contract),
+            request,
+            timeout_ms=500,
+        )
+    assert calls == ["contract"]
+
+
 def test_a2a_example_retries_transient_discovery_and_requires_current_card():
     from examples.a2a import main as example
     from polaris.pkg.model.error import ErrorCode, SDKError
@@ -299,6 +419,216 @@ def test_a2a_example_retries_transient_discovery_and_requires_current_card():
     assert discovered.get_version() == "2.0.0"
     assert discovered.get_metadata()["ai-agent-card"] == current_text
     assert calls == ["discover", "discover", "discover"]
+
+
+def test_a2a_example_builds_three_interfaces_for_one_ip():
+    from examples.a2a import main as example
+
+    card = {
+        "name": "agent",
+        "version": "1.0.0",
+        "supportedInterfaces": [],
+    }
+    modern = example.build_agent_card(card, "1.0", "127.0.0.1", 8080)
+    assert modern["supportedInterfaces"] == [
+        {
+            "url": "http://127.0.0.1:8080/a2a/v1",
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": "1.0",
+        },
+        {
+            "url": "http://127.0.0.1:8080/a2a/legacy",
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": "0.3",
+        },
+        {
+            "url": "http://127.0.0.1:8080/rest",
+            "protocolBinding": "HTTP+JSON",
+            "protocolVersion": "1.0",
+        },
+    ]
+
+    legacy = example.build_agent_card(card, "0.3", "127.0.0.1", 8080)
+    assert legacy["protocolVersion"] == "0.3.0"
+    assert legacy["url"] == "http://127.0.0.1:8080/a2a/legacy"
+    assert legacy["additionalInterfaces"] == [
+        {"url": "http://127.0.0.1:8080/a2a/v1", "transport": "JSONRPC"},
+        {"url": "http://127.0.0.1:8080/rest", "transport": "HTTP+JSON"},
+    ]
+    assert "supportedInterfaces" not in legacy
+
+
+def test_a2a_example_serves_jsonrpc_and_rest_interfaces():
+    from aiohttp import ClientSession
+
+    from examples.a2a import main as example
+
+    card = {
+        "name": "agent",
+        "version": "1.0.0",
+        "supportedInterfaces": [],
+    }
+
+    async def scenario():
+        app, runner, port = await example.start_a2a_server("127.0.0.1", 0)
+        app[example.AGENT_CARD_STATE]["card"] = example.build_agent_card(
+            card, "1.0", "127.0.0.1", port)
+        try:
+            async with ClientSession() as client:
+                response = await client.get(
+                    f"http://127.0.0.1:{port}/.well-known/agent-card.json")
+                assert response.status == 200
+                discovered = await response.json(content_type=None)
+                assert len(discovered["supportedInterfaces"]) == 3
+
+                response = await client.post(
+                    f"http://127.0.0.1:{port}/a2a/v1",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": "v1",
+                        "method": "message/send",
+                        "params": {
+                            "message": {
+                                "role": "ROLE_USER",
+                                "parts": [{"text": "modern"}],
+                            },
+                        },
+                    },
+                )
+                assert response.status == 200
+                modern = (await response.json(content_type=None))["result"]
+                assert modern["role"] == "ROLE_AGENT"
+                assert modern["parts"][0]["text"] == (
+                    "A2A 1.0 JSONRPC echo: modern")
+
+                response = await client.post(
+                    f"http://127.0.0.1:{port}/a2a/legacy",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": "legacy",
+                        "method": "message/send",
+                        "params": {
+                            "message": {
+                                "role": "user",
+                                "parts": [{"type": "text", "text": "old"}],
+                            },
+                        },
+                    },
+                )
+                assert response.status == 200
+                legacy = (await response.json(content_type=None))["result"]
+                assert legacy["role"] == "agent"
+                assert legacy["parts"][0]["text"] == (
+                    "A2A 0.3 JSONRPC echo: old")
+
+                response = await client.post(
+                    f"http://127.0.0.1:{port}/rest",
+                    json={
+                        "message": {
+                            "role": "ROLE_USER",
+                            "parts": [{"text": "rest"}],
+                        },
+                    },
+                )
+                assert response.status == 200
+                rest = await response.json(content_type=None)
+                assert rest["kind"] == "message"
+                assert rest["parts"][0]["text"] == (
+                    "A2A 1.0 HTTP+JSON echo: rest")
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=5))
+
+
+def test_a2a_example_registers_card_generated_from_bound_port(
+    tmp_path, monkeypatch, capsys,
+):
+    from examples.a2a import main as example
+
+    calls = []
+    registered = {}
+
+    async def register(request):
+        calls.append("register")
+        registered["request"] = request
+        return SimpleNamespace(instance_id="generated-instance")
+
+    async def deregister(_request):
+        calls.append("deregister")
+
+    def node_for(request):
+        return SimpleNamespace(
+            get_id=lambda: "generated-instance",
+            get_metadata=lambda: dict(request.metadata),
+            get_version=lambda: request.version,
+            get_host=lambda: request.host,
+            get_port=lambda: request.port,
+            get_protocol=lambda: request.protocol,
+        )
+
+    async def discover(_request):
+        return SimpleNamespace(instances=[node_for(registered["request"])])
+
+    class Context:
+        @staticmethod
+        def destroy():
+            calls.append("destroy")
+
+    provider = SimpleNamespace(
+        async_register_instance=register,
+        async_deregister_instance=deregister,
+    )
+    consumer = SimpleNamespace(async_get_all_instances=discover)
+    card = {
+        "name": "generated-agent",
+        "version": "1.0.0",
+        "supportedInterfaces": [],
+    }
+    card_path = tmp_path / "agent-card.json"
+    card_path.write_text(json.dumps(card), encoding="utf-8")
+    args = SimpleNamespace(
+        card=str(card_path),
+        a2a_version="1.0",
+        namespace="ns",
+        server="offline:8091",
+        token="",
+        registration_port=1,
+        duration=0,
+        keep_running=False,
+        serve=True,
+        host="127.0.0.1",
+        port=0,
+    )
+
+    monkeypatch.setattr(example.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(example, "demo_backup_directory", lambda *_: tmp_path)
+    monkeypatch.setattr(example, "demo_log_options", lambda *_: None)
+    monkeypatch.setattr(
+        example, "init_context_by_config", lambda *_args, **_kwargs: Context(),
+    )
+    monkeypatch.setattr(example, "ProviderAPI", lambda _context: provider)
+    monkeypatch.setattr(example, "ConsumerAPI", lambda _context: consumer)
+
+    asyncio.run(asyncio.wait_for(example.run(args), timeout=5))
+
+    request = registered["request"]
+    registered_card = json.loads(request.metadata["ai-agent-card"])
+    interfaces = registered_card["supportedInterfaces"]
+    assert len(interfaces) == 3
+    assert {urlsplit(item["url"]).path for item in interfaces} == {
+        "/a2a/v1", "/a2a/legacy", "/rest",
+    }
+    listen_port = urlsplit(interfaces[0]["url"]).port
+    assert all(f":{listen_port}/" in item["url"] for item in interfaces)
+    assert request.host == "127.0.0.1"
+    assert request.port == 1
+    assert request.protocol == ""
+    assert calls == ["register", "deregister", "destroy"]
+
+    output = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert output["listen_port"] == listen_port
+    assert set(output["endpoints"].values()) == {item["url"] for item in interfaces}
 
 
 def test_a2a_example_stop_cancels_inflight_discovery():

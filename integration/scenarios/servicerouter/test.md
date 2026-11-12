@@ -9,6 +9,32 @@
 `metadataRouter` 在默认主链上。请求带 metadata 时按全部 key/value 精确匹配，
 支持 `none`、`all`、`others` 三种降级策略。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；真实 SDK context、路由、负载均衡和结果上报均在进程内，不额外启动 Provider 进程。 |
+| 远端 | 1 个验证器进程 + 1 个 quickstart Provider 子进程 + 1 个 `servicerouter/main.py` 子进程；Provider 保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | fake registry 提供 6 个实例：`isolated`、`zero-weight`、`prod`、`stable`、`unhealthy-prod`、`missing`，端口 8081-8086；不注册实例。 |
+| 离线全死全活 | `ns/svc` | 额外测试快照使用 `down-prod:8091`、`down-stable:8092` 两个不健康实例。 |
+| 远端 | `polaris-python-integration/servicerouter-provider-<时间>` | 1 个真实实例，host 为路由源 IP，动态端口。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| ConsumerAPI → registry | 异步和同步发现 6 个实例，验证 metadata、隔离、权重、健康和全死全活筛选。 |
+| ConsumerAPI → load balancer | 每个路由 case 连续选择实例，默认链、精确 metadata、`others` 降级和 recover 回退分别断言。 |
+| ConsumerAPI → 调用结果仓库 | 每次选择后上报一次结果，测试记录被选实例 ID。 |
+| 远端 demo → Provider 实例 | 只做 4 次实例选择并上报，不发起业务 HTTP 请求；检查结果包含真实 host/port。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -119,7 +145,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only servicerouter
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-servicerouter-<年月日时分秒毫秒>`。demo 超时 30 秒。
+命名空间默认 `polaris-python-integration`。服务名是
+`servicerouter-provider-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
 步骤：
 

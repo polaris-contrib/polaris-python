@@ -4,12 +4,17 @@
   "version": "1.0.0",
   "supportedInterfaces": [
     {
-      "url": "http://127.0.0.1:8080/a2a",
+      "url": "http://127.0.0.1:8080/a2a/v1",
       "protocolBinding": "JSONRPC",
       "protocolVersion": "1.0"
     },
     {
-      "url": "http://127.0.0.1:8081/a2a/rest",
+      "url": "http://127.0.0.1:8080/a2a/legacy",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "0.3"
+    },
+    {
+      "url": "http://127.0.0.1:8080/rest",
       "protocolBinding": "HTTP+JSON",
       "protocolVersion": "1.0"
     }

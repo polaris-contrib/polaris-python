@@ -36,7 +36,6 @@ SCENARIOS = INTEGRATION / "scenarios"
 LOG_ROOT = INTEGRATION / ".logs"
 RUNTIME_ROOT = INTEGRATION / ".runtime"
 TERMINATE_GRACE_SECONDS = 10
-E2E_SERVICE_PREFIX = "polaris-python-e2e-"
 SERVICE_SCENARIO_ALIASES = {
     "quickstart/provider": "quickstart",
     "quickstart/consumer": "quickstart",
@@ -46,6 +45,10 @@ SERVICE_SCENARIO_ALIASES = {
 
 sys.path[:0] = [str(REPO / "src"), str(REPO)]
 from integration._runtime import (  # noqa: E402
+    DEFAULT_E2E_NAMESPACE,
+    E2E_SERVICE_ROLES,
+    LEGACY_E2E_NAMESPACE,
+    is_e2e_service_name,
     new_run_directory,
     process_owner_directory,
     resolve_e2e_namespace,
@@ -335,10 +338,18 @@ def e2e_namespace():
     return resolve_e2e_namespace()
 
 
-def test_services():
+def cleanup_namespaces():
+    """Scan legacy resources during migration unless a namespace was explicit."""
+    configured = os.getenv("POLARIS_E2E_NAMESPACE")
+    if configured is not None and configured.strip():
+        return [resolve_e2e_namespace()]
+    return [DEFAULT_E2E_NAMESPACE, LEGACY_E2E_NAMESPACE]
+
+
+def test_services(namespace=None):
     """List only services created by this repository's real-service tests."""
     address = console_address()
-    namespace = e2e_namespace()
+    namespace = namespace or e2e_namespace()
     token = os.getenv("POLARIS_E2E_SERVICE_TOKEN") or os.getenv(
         "POLARIS_SERVICE_TOKEN", ""
     )
@@ -358,8 +369,18 @@ def test_services():
         item["name"]
         for item in body.get("services", [])
         if item.get("namespace") == namespace
-        and item.get("name", "").startswith(E2E_SERVICE_PREFIX)
+        and is_e2e_service_name(item.get("name", ""))
     ]
+
+
+def test_services_for_cleanup():
+    """Return owned services grouped by current and legacy cleanup namespaces."""
+    address = console_address()
+    services = {}
+    for namespace in cleanup_namespaces():
+        _, _, names = test_services(namespace)
+        services[namespace] = names
+    return address, services
 
 
 def delete_test_services(address, namespace, names):
@@ -536,19 +557,18 @@ def cleanup(scope, args):
             ]
         )
     if delete_services:
-        address, namespace, names = test_services()
-        prefixes = []
+        address, services_by_namespace = test_services_for_cleanup()
+        labels = []
         for directory in selected_directories:
             demo = _demo_name(directory)
             demo = SERVICE_SCENARIO_ALIASES.get(demo, demo)
-            prefixes.append(
-                f"{E2E_SERVICE_PREFIX}{demo.replace('/', '-')}-"
-            )
-        names = [
-            name for name in names
-            if any(name.startswith(prefix) for prefix in prefixes)
-        ]
-        services = (address, namespace, names)
+            labels.append(demo.replace("/", "-"))
+        services = {}
+        for namespace, names in services_by_namespace.items():
+            services[namespace] = [
+                name for name in names
+                if any(is_e2e_service_name(name, label) for label in labels)
+            ]
     else:
         services = None
     if keep_logs:
@@ -559,11 +579,12 @@ def cleanup(scope, args):
     for path in targets:
         print(f"Directory: {path}")
     if services is not None:
-        address, namespace, names = services
-        print(
-            f"Services: {address} "
-            f"{namespace}/{E2E_SERVICE_PREFIX}* ({len(names)})"
-        )
+        for namespace, names in services.items():
+            print(
+                f"Services: {address} "
+                f"{namespace}/<scenario>-<{'|'.join(E2E_SERVICE_ROLES)}>"
+                f"-<timestamp> or legacy E2E names ({len(names)})"
+            )
     if args.dry_run:
         print("Dry run; nothing changed.")
         return 0
@@ -612,9 +633,9 @@ def cleanup(scope, args):
             pass
     psutil.wait_procs(alive, timeout=2)
     if services is not None:
-        address, namespace, names = services
-        for name in delete_test_services(address, namespace, names):
-            print(f"Deleted service: {namespace}/{name}")
+        for namespace, names in services.items():
+            for name in delete_test_services(address, namespace, names):
+                print(f"Deleted service: {namespace}/{name}")
     if keep_logs:
         print("Kept logs.")
     for path in targets:

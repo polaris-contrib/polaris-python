@@ -4,6 +4,32 @@
 离线验证只替换 gRPC RPC 边界，配置、owner loop、本地缓存、刷新任务、熔断状态机、事件派发、
 HTTP 批量上报和销毁清理都使用真实实现。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；SDK context、本地 Pushgateway aiohttp listener 和事件验证均在进程内运行。 |
+| 远端 | 1 个验证器进程 + 1 个 quickstart Provider 子进程 + 1 个 `events/main.py` 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | fake Discover 返回 1 个 `event-node` 实例，`127.0.0.1:18080`；events 本身不注册实例。 |
+| 远端 | `polaris-python-integration/events-provider-<时间>` | quickstart Provider 注册 1 个实例；events Consumer 不注册实例。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| events Consumer → registry | 首次 Discover 触发 `OnServiceAdded`；revision 更新触发 `OnServiceUpdated`；400301 删除触发 `OnServiceDeleted`。 |
+| Consumer → 调用结果仓库 | 上报 500/200 结果并触发本地 Open、HalfOpen、Close 事件。 |
+| SDK event center → 本地 listener | 验证 6 个事件的完整顺序和 context 隔离。 |
+| SDK event reporter → Pushgateway | 仅三个熔断事件 POST 到 `/polaris/client/events`；缓存事件只保留本地。 |
+| 服务之间 | 不发起业务 HTTP 调用；重点是实例缓存和熔断事件。 |
+
 ## 脚本作用
 
 从仓库根目录执行 `./integration/verify.sh --only events`。统一入口运行 verify.py 并记录
@@ -47,7 +73,7 @@ polaris/log/event/ 保存事件日志，polaris/backup/ 保存实例备份，运
 
 离线验证使用 ns/svc 和 event-node 实例，不连接外部服务。手工真实入口默认服务为
 default/DiscoverEchoServer；统一远端脚本会注册
-`polaris-python-e2e-events-<时间>` 并显式传入。若注册中心要求鉴权，设置
+`events-provider-<时间>` 并显式传入。若注册中心要求鉴权，设置
 `POLARIS_TOKEN`。真实入口只验证首次发现事件的订阅链路，不伪造服务端删除或熔断错误。
 
 监控端口使用操作系统临时端口，避免多个示例同时运行时冲突。事件示例不注册业务实例，

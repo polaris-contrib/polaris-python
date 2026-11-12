@@ -3,6 +3,31 @@
 本目录验证 YAML 文件启动、环境变量替换和覆盖、默认文件查找、字段校验及代码配置隔离。
 这是 `sdkconfig` 中规模最大的验证场景。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个 file verifier + 每个 case 1 个 demo 子进程；成功/失败 case 顺序执行，子进程退出后检查输出。 |
+| 远端 | 1 个验证器 + 1 个 quickstart Provider 子进程 + 1 个 `sdkconfig/file/main.py` 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | 无 | 无业务服务和实例；多组 `127.0.0.x:port` 仅用于验证地址、占位符、网卡和 bind IP。 |
+| 远端 | `polaris-python-integration/sdkconfig-file-provider-<时间>` | Provider 1 个实例，host 为路由源 IP，动态端口；file demo 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| verifier → file child | 为每个 case提供独立工作目录和环境，比较完整 JSON 或预期错误文本。 |
+| file demo → YAML/环境 | 验证文件查找、占位符、环境覆盖、坏文件和非法字段处理。 |
+| demo ConsumerAPI → Provider 服务 | 远端读取 `file/polaris.yaml` 并接受环境地址覆盖，发现 Provider 实例。 |
+| demo → Provider 业务端口 | 不发起业务 HTTP；只核对发现结果 instance ID。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -102,7 +127,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only sdkconfig/file
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-sdkconfig-file-<年月日时分秒毫秒>`。demo 超时 30 秒。
+命名空间默认 `polaris-python-integration`。服务名是
+`sdkconfig-file-provider-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
 步骤：
 

@@ -36,6 +36,7 @@ from polaris.pkg.model.contract import (
     ServiceFeature,
     ServiceFeatureType,
 )
+from polaris.pkg.model.error import SDKError, ServerCode
 from polaris.pkg.model.server import InstanceDeRegisterRequest, InstanceRegisterRequest
 from polaris.pkg.model.service import GetInstancesRequest
 
@@ -103,6 +104,26 @@ def wait_for_instance(consumer, args, instance_id):
     raise RuntimeError("registered MCP instance did not become discoverable")
 
 
+def retryable_contract_error(error):
+    """Return whether a just-reported contract may still be temporarily absent."""
+    return error.server_code == ServerCode.NotFoundResource
+
+
+def wait_for_contract(consumer, request, timeout_ms):
+    """Read a contract, retrying temporary not-found responses until timeout."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        try:
+            return consumer.get_service_contract(request)
+        except SDKError as error:
+            if not retryable_contract_error(error):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.2, remaining))
+
+
 def run(args):
     if not args.host:
         args.host = get_local_host(args.server.split(",", 1)[0].strip())
@@ -145,13 +166,14 @@ def run(args):
         ))
         provider.report_service_contract(mcp_contract(args))
         snapshot, selected = wait_for_instance(consumer, args, registered.instance_id)
-        contract = consumer.get_service_contract(GetServiceContractRequest(
+        contract_request = GetServiceContractRequest(
             args.namespace,
             args.service,
             args.protocol,
             args.version,
             args.timeout,
-        ))
+        )
+        contract = wait_for_contract(consumer, contract_request, args.timeout)
         print(json.dumps({
             "instance_id": registered.instance_id,
             "instance_type": type(selected).__name__,

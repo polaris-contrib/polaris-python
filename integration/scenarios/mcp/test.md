@@ -5,6 +5,32 @@
 默认离线脚本不访问任何外部服务；它替换 specification RPC 边界，保留真实 owner loop、
 实例转换、Discover 缓存、路由、负载均衡、自动心跳、契约转换和退出流程。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；`mcp/main.py` 在同一进程内执行，不启动 MCP HTTP 服务。 |
+| 远端 | 1 个验证器进程 + 1 个 `mcp/main.py` 子进程；成功后进程保持运行，cleanup 时退出。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/mcp` | 1 个普通实例 `mcp-node`，`127.0.0.1:18080`，TTL 自动心跳。 |
+| 远端 | `polaris-python-integration/mcp-provider-<时间>` | 1 个普通实例，host 为路由源 IP，动态业务端口，protocol `mcp-streamable-http`。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| demo → ProviderAPI | 注册普通 Instance，开启心跳，并显式上报 MCP 启动契约。 |
+| ConsumerAPI → registry | 使用 `get_instances` 和 `get_one_instance` 发现同一实例，检查协议、版本和 metadata。 |
+| ConsumerAPI → service contract | 读取 lookup、document、summarize 三项能力，并处理 not-found 重试。 |
+| MCP 客户端 → 实例端口 | 不建立 MCP tools/list 或工具调用；端口只用于注册和发现。 |
+| 验证器 → demo 输出 | 检查 instance type、能力集合、host 和进程存活状态。 |
+
 ## 脚本作用
 
 从仓库根目录执行 `./integration/verify.sh --only mcp`。
@@ -31,6 +57,7 @@
 
 单元测试另覆盖示例严格兼容失败、非严格告警、发现检查失败继续注册、契约上报失败不回滚、
 协议版本交集、IPv6 URL、参数校验，以及注册 / 契约读取 / 选址 / 反注册失败后的清理。
+公开入口另有“首次 400202、第二次成功”的测试，并验证其他 not-found 错误不重试。
 普通 SDK 同步 / 异步入口另有覆盖；context 销毁只停心跳，不隐式反注册。
 缓存和 get_instances 保留全部实例，包括不健康、隔离、零权重和 OFFLINE 服务。
 普通单实例选择走 SDK 路由，示例兼容检查和所选实例的 MCP 检查不修改原始快照，
@@ -50,7 +77,7 @@
 离线 namespace/service 为 ns/mcp；注册 ID 为 mcp-node，host/port 为 127.0.0.1:18080。
 offline:8091 由 stub 替换，不监听真实注册中心端口。
 实例端口只是用于注册和发现的示例值，验证器不启动 MCP HTTP 服务。
-真实脚本使用临时服务 polaris-python-e2e-mcp-<时间> 和动态分配的端口。
+真实脚本使用临时服务 `mcp-provider-<时间>` 和动态分配的端口。
 直接运行 main.py 时，host/port 应对应应用已启动的 MCP HTTP 服务。
 
 ## 远端验证
@@ -64,7 +91,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only mcp
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-mcp-<年月日时分秒毫秒>`。
+命名空间默认 `polaris-python-integration`。服务名是
+`mcp-provider-<年月日时分秒毫秒>`。
 本机端口由操作系统分配，host 使用 `get_local_host(POLARIS_SERVER_ADDRESS)` 得到的
 路由源 IP，协议 `mcp-streamable-http`，协议版本 `2025-06-18`，服务版本 `v1`，
 TTL 1 秒。超时 30 秒。

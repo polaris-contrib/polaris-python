@@ -4,6 +4,33 @@
 Consumer HTTP 前端、同步和异步
 实例选择、调用结果上报、熔断状态和恢复流程。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；Consumer HTTP 前端、两个 Provider listener 和 SDK context 均在进程内。 |
+| 远端 | 跑父级完整场景：1 个验证器 + 1 个 Provider 子进程 + 1 个本 Consumer 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `default/CircuitBreakerCallee` | fake registry 提供 2 个 Provider 实例；Consumer 不注册。 |
+| 远端 | `polaris-python-integration/circuitbreaker-callee-<时间>` | 1 个 callee 实例，供 Consumer 发现和调用。 |
+| 远端 | `polaris-python-integration/circuitbreaker-caller-<时间>` | 1 个 caller 实例，对应 Consumer HTTP 前端。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| 验证器 → Consumer `/echo` | 请求 Consumer 前端，Consumer 通过 Discover 选择 callee 并发起真实 HTTP。 |
+| Consumer → callee | 200/404/500 和请求 ID 透传决定成功、失败和熔断状态。 |
+| Consumer → 调用结果仓库 | 每次调用后上报 ret_code、状态和延迟，驱动本地实例熔断。 |
+| 验证器 → Consumer `/instances` | 检查缓存实例、fault 状态和最终 `closed`。 |
+| 服务之间 | caller 是被调用入口，callee 是下游；不反向调用 caller。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -71,7 +98,7 @@ SDK 分类日志在 `polaris/log/consumer/`，cache 和锁文件在同级 `polar
 
 ## 注册服务与实例
 
-Consumer 不注册业务服务实例，只创建 SDK context 并发现以下实例：
+离线验证中的 Consumer 不注册业务服务实例，只创建 SDK context 并发现以下实例：
 
 | 项目 | 值 |
 | --- | --- |
@@ -79,10 +106,11 @@ Consumer 不注册业务服务实例，只创建 SDK context 并发现以下实�
 | Provider 实例数 | 2 |
 | Provider host | `127.0.0.1` |
 | Provider port | 动态分配，ID 为 `instance-<实际端口>` |
-| Consumer HTTP 端口 | 验证时为动态端口 |
+| Consumer HTTP 端口 | 离线验证时为动态端口 |
 | 手动运行默认端口 | `18081` |
 
-Consumer 会发送 client/report 数据并上报调用结果，但不会在 Polaris 创建业务实例。
+离线验证中 Consumer 会发送 client/report 数据并上报调用结果，但不会创建业务实例。
+真实 E2E 会为 Consumer HTTP 前端启用 `--caller-service`，并注册一个 caller 实例。
 默认 `18081` 与 Provider 默认端口相同；同机同时运行时应显式选择不同端口。
 
 ## 远端验证
@@ -97,15 +125,20 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only circuitbreaker/consumer
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-circuitbreaker-<年月日时分秒毫秒>`。
+命名空间默认 `polaris-python-integration`。Provider 注册为
+`circuitbreaker-callee-<年月日时分秒毫秒>`，Consumer HTTP 前端注册为
+`circuitbreaker-caller-<年月日时分秒毫秒>`。
 
 步骤：
 
 1. 父目录 Provider 以 `127.0.0.1`、动态端口、HTTP 200、TTL 3 秒注册，并保持心跳。
 2. 最多 20 秒，直到不带缓存的发现看到这个 instance id。
-3. 本目录 Consumer 监听动态端口，自己不注册实例。验证器请求 `/echo`，要求 HTTP 200、`ret_code` 200、`circuit_state` 为 `closed`。
+3. 本目录 Consumer 监听动态端口，并把该端口注册到 `circuitbreaker-caller-*`。
+   验证器请求 Consumer 的 `/echo`，要求 HTTP 200、`ret_code` 200、
+   `circuit_state` 为 `closed`。
 4. `/instances` 必须只有这一个实例，且 id 与注册结果相同。
-5. 两个进程保持运行。验证器不上报失败，也不反注册。
+5. 验证器切换 callee 失败并恢复，覆盖 Open、HalfOpen、Close 和事件上报。
+6. caller 与 callee 两个进程保持运行，服务对象和实例保留到显式 cleanup。
 
 通过条件是 `circuit_state` 为 `closed`。半开和错误率只在离线验证。
 `./integration/cleanup.sh --force` 停进程，`--delete-services` 删服务。

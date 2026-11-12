@@ -24,7 +24,6 @@ from examples._support import demo_backup_directory, demo_log_options
 import argparse
 import asyncio
 import json
-import os
 
 from polaris import Configuration, ConsumerAPI, SDKError, init_context_by_config
 from polaris.pkg.model.service import GetInstancesRequest

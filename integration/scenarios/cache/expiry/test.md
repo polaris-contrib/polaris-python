@@ -4,6 +4,31 @@
 重新从服务端加载。验证不访问外部 Polaris，但使用真实 SDK cache、后台事件循环、
 淘汰扫描器和文件写入线程。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；真实 SDK context、Discover 流、淘汰器和后台线程都在进程内，无 Provider 进程。 |
+| 远端 | 1 个验证器进程 + 1 个 quickstart Provider 子进程 + 1 个 `cache/expiry/main.py` 子进程。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | fake registry 返回 1 个 `instance-1`，`127.0.0.1:8080`；不注册。 |
+| 远端 | `polaris-python-integration/cache-expiry-provider-<时间>` | Provider 注册 1 个实例，host 为路由源 IP，动态端口，TTL 1 秒；cache demo 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| ConsumerAPI → Discover | 首次发现写入内存和备份；闲置 5 秒后淘汰资源并关闭流。 |
+| ConsumerAPI → 再次 Discover | 第二次发现从服务端重新加载相同实例 ID，并重新建立流和备份。 |
+| 远端 demo → registry | Provider 启动后，demo 在闲置阈值前后各发现一次，比较 `initial_ids` 与 `reloaded_ids`。 |
+| 服务之间 | demo 不向 Provider 发业务 HTTP 请求，只检查实例发现 ID。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -93,7 +118,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only cache/expiry
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-cache-expiry-<年月日时分秒毫秒>`。demo 超时 30 秒。
+命名空间默认 `polaris-python-integration`。服务名是
+`cache-expiry-provider-<年月日时分秒毫秒>`。demo 超时 30 秒。
 
 步骤：
 

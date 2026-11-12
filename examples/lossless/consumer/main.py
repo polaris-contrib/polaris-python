@@ -27,7 +27,6 @@ from examples._support import demo_backup_directory, demo_log_options
 import argparse
 import asyncio
 import json
-import os
 import signal
 from collections import Counter
 

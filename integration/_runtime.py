@@ -18,6 +18,7 @@
 import atexit
 import json
 import os
+import re
 import sys
 import traceback
 import uuid
@@ -33,9 +34,38 @@ EXAMPLES = REPO / "examples"
 SCENARIOS = INTEGRATION / "scenarios"
 LOG_ROOT = INTEGRATION / ".logs"
 RUNTIME_ROOT = INTEGRATION / ".runtime"
-DEFAULT_E2E_NAMESPACE = "python-integration"
+DEFAULT_E2E_NAMESPACE = "polaris-python-integration"
+LEGACY_E2E_NAMESPACE = "python-integration"
+E2E_SERVICE_ROLES = ("caller", "callee", "provider")
+E2E_SERVICE_TIMESTAMP_DIGITS = 17
+
+_E2E_SERVICE_ROLE_PATTERN = "|".join(map(re.escape, E2E_SERVICE_ROLES))
+_E2E_SERVICE_NAME_PATTERN = re.compile(
+    rf"^(?P<label>[a-z0-9]+(?:-[a-z0-9]+)*)-"
+    rf"(?P<role>{_E2E_SERVICE_ROLE_PATTERN})-"
+    rf"(?P<timestamp>\d{{{E2E_SERVICE_TIMESTAMP_DIGITS}}})$"
+)
+_LEGACY_E2E_SERVICE_NAME_PATTERN = re.compile(
+    rf"^polaris-python-e2e-(?P<label>[a-z0-9]+(?:-[a-z0-9]+)*)"
+    rf"-(?P<timestamp>\d{{{E2E_SERVICE_TIMESTAMP_DIGITS}}})$"
+)
 
 _tracked = set()
+
+
+def is_e2e_service_name(name, scenario=None):
+    """Return whether a service name follows the current or legacy E2E format."""
+    label = None
+    if scenario is not None:
+        label = scenario.strip("/").replace("/", "-") or "scenario"
+    for pattern in (
+        _E2E_SERVICE_NAME_PATTERN,
+        _LEGACY_E2E_SERVICE_NAME_PATTERN,
+    ):
+        match = pattern.fullmatch(name)
+        if match and (label is None or match.group("label") == label):
+            return True
+    return False
 
 
 def resolve_e2e_namespace():
@@ -45,7 +75,8 @@ def resolve_e2e_namespace():
         raise ValueError("POLARIS_E2E_NAMESPACE must not be empty")
     if namespace == "default":
         raise ValueError(
-            "POLARIS_E2E_NAMESPACE must not be default; use python-integration "
+            "POLARIS_E2E_NAMESPACE must not be default; use "
+            "polaris-python-integration "
             "or another isolated E2E namespace"
         )
     return namespace

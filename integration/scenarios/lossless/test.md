@@ -2,6 +2,32 @@
 
 本目录验证无损上线、健康探测、readiness、消费端发现与无损下线的完整链路。离线验证保留真实 SDKContext、ProviderAPI、ConsumerAPI、admin HTTP 服务、业务 HTTP 服务和本地缓存刷新，只替换注册中心 gRPC 边界。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 1 个验证器进程；Provider 和 Consumer 是同一进程内的两个异步任务，各自启动真实业务/管理 HTTP listener。 |
+| 远端 | 1 个验证器进程 + 1 个 Provider 子进程 + 1 个 Consumer 子进程；验证完成后 Consumer 退出，Provider 保持心跳直到 cleanup。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | Provider 1 个实例 `lossless-provider`，业务端口和 admin 端口均动态分配，TTL 1 秒；Consumer 不注册。 |
+| 远端 | `polaris-python-integration/lossless-provider-<时间>` | Provider 1 个实例，host 为到 Polaris 的路由源 IP，业务端口动态；Consumer 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| 验证器 → Provider admin | 注册前 `/readiness` 为 `503 UNREGISTERED`，注册后为 `200 REGISTERED`。 |
+| SDK health probe → Provider `/ready` | 按 lossless warmup 规则探测健康后再注册。 |
+| Consumer → Provider | Consumer 通过 Discover 选择 Provider，并真实请求 `/echo`。 |
+| registry → Consumer Discover | Provider 反注册后，发现流收到空实例并停止向已下线实例路由。 |
+| 验证器 → registry stub | 断言注册/反注册各 1 次，并观察到 lossless 规则 Discover 与实例 Discover。 |
+
 ## 脚本作用
 
 | 文件 | 作用 |
@@ -86,6 +112,8 @@ POLARIS_SERVICE_TOKEN=<token>
 检查 host 为本机到 Polaris 的路由源 IP，等待 `/readiness` 返回 `REGISTERED`，
 再等待实例在注册中心可见；随后启动 Consumer 并产生真实 HTTP 调用。Consumer
 汇总调用后停止，Provider 保持运行并继续心跳，供控制台核查，直到显式 cleanup。
+命名空间默认 `polaris-python-integration`，Provider 服务名为
+`lossless-provider-<年月日时分秒毫秒>`，Provider 和 Consumer 使用动态端口。
 Provider 启动等待使用 `verify_e2e.sh --timeout` 传入的场景预算，因此健康探测或
 延迟注册超过 60 秒时仍可在默认 600 秒场景预算内完成。
 离线验证仍覆盖 provider 停止时的 `lossless_deregister()` 和 readiness 状态切换。

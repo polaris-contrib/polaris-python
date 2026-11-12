@@ -51,6 +51,7 @@ from integration._support import (
     get_local_host,
 )
 from integration._runtime import (
+    E2E_SERVICE_ROLES,
     record_external_process,
     resolve_e2e_namespace,
     verification_directory,
@@ -122,12 +123,17 @@ def e2e_namespace():
     return resolve_e2e_namespace()
 
 
-def service_name(scenario):
-    """Build a service name from the demo path and the local time to milliseconds."""
-    label = scenario.strip("/").replace("/", "-")
+def service_name(scenario, role="provider"):
+    """Build a scenario service name with an explicit caller/callee/provider role."""
+    if role not in E2E_SERVICE_ROLES:
+        raise ValueError(
+            f"unsupported E2E service role {role!r}; "
+            f"choose from {', '.join(E2E_SERVICE_ROLES)}"
+        )
+    label = scenario.strip("/").replace("/", "-") or "scenario"
     now = datetime.now()
     stamp = now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond // 1000:03d}"
-    return f"polaris-python-e2e-{label}-{stamp}"
+    return f"{label}-{role}-{stamp}"
 
 
 def scenario_timeout(env):
@@ -457,6 +463,22 @@ def request_json(url):
             return error.code, json.loads(error.read())
 
 
+def post_json(url, payload):
+    """POST one JSON payload without proxy or authentication wrappers."""
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with build_opener(ProxyHandler({})).open(request, timeout=10) as response:
+            return response.status, json.loads(response.read())
+    except HTTPError as error:
+        with error:
+            return error.code, json.loads(error.read())
+
+
 def request_text(url):
     try:
         with build_opener(ProxyHandler({})).open(url, timeout=10) as response:
@@ -627,10 +649,11 @@ def verify_quickstart(env, address, service_token, namespace):
 
 
 def verify_circuitbreaker(env, address, service_token, namespace):
-    service = service_name("circuitbreaker")
+    caller_service = service_name("circuitbreaker", "caller")
+    callee_service = service_name("circuitbreaker", "callee")
     provider, provider_payload = start_demo(FIXTURES / "circuitbreaker_provider.py", [
         "--namespace", namespace,
-        "--service", service,
+        "--service", callee_service,
         "--service-token", service_token,
         "--port", "0",
         "--status", "200",
@@ -640,7 +663,7 @@ def verify_circuitbreaker(env, address, service_token, namespace):
     consumer = None
     consumer_port = None
     wait_for_provider(
-        address, namespace, service, provider_payload["registered"], env,
+        address, namespace, callee_service, provider_payload["registered"], env,
     )
     config = yaml.safe_load(
         (FIXTURES / "config/circuitbreaker/consumer.yaml").read_text(encoding="utf-8")
@@ -651,15 +674,30 @@ def verify_circuitbreaker(env, address, service_token, namespace):
     circuit["successCountAfterHalfOpen"] = 2
     circuit["defaultErrorCount"] = 3
     consumer_config = Path(env["POLARIS_DEMO_RUN_DIR"]) / "work/circuitbreaker-consumer.yaml"
+    consumer_config.parent.mkdir(parents=True, exist_ok=True)
     consumer_config.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     consumer_port = free_port()
-    consumer, _ = start_demo(FIXTURES / "circuitbreaker_consumer.py", [
+    consumer, consumer_payload = start_demo(FIXTURES / "circuitbreaker_consumer.py", [
         "--namespace", namespace,
-        "--service", service,
+        "--service", callee_service,
+        "--caller-service", caller_service,
+        "--service-token", service_token,
         "--port", str(consumer_port),
         "--call-timeout", "5",
         "--config", str(consumer_config),
     ], env, "started")
+    caller_instance_id = consumer_payload.get("caller_instance_id")
+    caller_host = consumer_payload.get("host")
+    if not caller_instance_id or not caller_host:
+        raise RuntimeError("circuitbreaker caller did not register its HTTP endpoint")
+    assert_instance_host(caller_host, address)
+    wait_for_provider(
+        address,
+        namespace,
+        caller_service,
+        caller_instance_id,
+        env,
+    )
     status, result = wait_for_http(
         f"http://127.0.0.1:{consumer_port}/echo",
         lambda code, body: code == 200 and body["ret_code"] == 200 and body["circuit_state"] == "closed",
@@ -713,7 +751,16 @@ def verify_circuitbreaker(env, address, service_token, namespace):
     if provider.poll() is not None or consumer.poll() is not None:
         raise RuntimeError("circuitbreaker provider or consumer exited during verification")
     return {
-        "service": service,
+        "service": callee_service,
+        "services": {
+            "caller": caller_service,
+            "callee": callee_service,
+        },
+        "caller": {
+            "instance_id": caller_instance_id,
+            "host": caller_host,
+            "port": consumer_payload["port"],
+        },
         "provider": {"instance_id": provider_payload["registered"],
                      "host": provider_payload["host"], "port": provider_payload["port"]},
         "consumer_port": consumer_port,
@@ -1003,12 +1050,17 @@ def run_scenario(name, address, service_token, namespace, env):
             "version": "1.0.0",
             "supportedInterfaces": [
                 {
-                    "url": f"http://{authority}:8080/a2a",
+                    "url": f"http://{authority}:8080/a2a/v1",
                     "protocolBinding": "JSONRPC",
                     "protocolVersion": "1.0",
                 },
                 {
-                    "url": f"http://{authority}:8081/a2a/rest",
+                    "url": f"http://{authority}:8080/a2a/legacy",
+                    "protocolBinding": "JSONRPC",
+                    "protocolVersion": "0.3",
+                },
+                {
+                    "url": f"http://{authority}:8080/rest",
                     "protocolBinding": "HTTP+JSON",
                     "protocolVersion": "1.0",
                 },
@@ -1026,20 +1078,72 @@ def run_scenario(name, address, service_token, namespace, env):
         card_path = Path(env["POLARIS_DEMO_RUN_DIR"]) / "work" / "a2a-agent-card.json"
         card_path.parent.mkdir(parents=True, exist_ok=True)
         card_path.write_text(json.dumps(card, indent=2), encoding="utf-8")
-        process, result = start_demo(FIXTURES / "a2a.py", [
+        process, result = start_demo(EXAMPLES / "a2a/main.py", [
             "--server", address, "--token", service_token, "--namespace", namespace,
-            "--card", str(card_path), "--keep-running",
+            "--card", str(card_path), "--host", host, "--port", "0",
+            "--keep-running",
         ], env, "instance_id", timeout=90)
         if result.get("transport") != "JSONRPC":
             raise AssertionError("A2A metadata discovery failed")
         if result.get("port") != 1 or result.get("protocol") != "":
             raise AssertionError("A2A instance identity does not match registration_port/default protocol")
-        if result.get("a2a_version") != "1.0" or result.get("endpoint") != f"http://{authority}:8080/a2a":
+        expected_endpoint = result.get("endpoint")
+        if (
+            result.get("a2a_version") != "1.0"
+            or not isinstance(expected_endpoint, str)
+            or not expected_endpoint.endswith("/a2a/v1")
+        ):
             raise AssertionError("A2A AgentCard schema or endpoint was not preserved")
+        endpoints = result.get("endpoints")
+        if not isinstance(endpoints, dict) or set(endpoints) != {
+            "jsonrpc_v1", "jsonrpc_v03", "http_json_v1",
+        }:
+            raise AssertionError("A2A Provider did not expose all three interfaces")
+        calls = {
+            "jsonrpc_v1": {
+                "jsonrpc": "2.0",
+                "id": "v1",
+                "method": "message/send",
+                "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "v1"}]}},
+            },
+            "jsonrpc_v03": {
+                "jsonrpc": "2.0",
+                "id": "v03",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "parts": [{"type": "text", "text": "v03"}],
+                    },
+                },
+            },
+            "http_json_v1": {
+                "message": {"role": "ROLE_USER", "parts": [{"text": "rest"}]},
+            },
+        }
+        expected_text = {
+            "jsonrpc_v1": "A2A 1.0 JSONRPC echo: v1",
+            "jsonrpc_v03": "A2A 0.3 JSONRPC echo: v03",
+            "http_json_v1": "A2A 1.0 HTTP+JSON echo: rest",
+        }
+        for interface, payload in calls.items():
+            status, body = post_json(endpoints[interface], payload)
+            if status != 200:
+                raise AssertionError(f"A2A {interface} returned HTTP {status}: {body}")
+            response = body.get("result", body)
+            text = response.get("parts", [{}])[0].get("text")
+            if text != expected_text[interface]:
+                raise AssertionError(
+                    f"A2A {interface} returned unexpected message: {body}")
         assert_instance_host(result["host"], address)
         if process.poll() is not None:
             raise RuntimeError("A2A example exited during verification")
-        return {"service": service, **result, "effect": "verified and kept the A2A process running"}
+        return {
+            "service": service,
+            **result,
+            "interfaces": sorted(calls),
+            "effect": "invoked three A2A interfaces and kept the A2A process running",
+        }
     return verify_discovery_demo(name, env, address, service_token, namespace)
 
 

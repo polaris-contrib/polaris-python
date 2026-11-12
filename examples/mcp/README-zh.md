@@ -17,8 +17,10 @@ POLARIS_SERVICE_TOKEN=service-token \
 `--protocol` 支持 `mcp-streamable-http`、`mcp-sse`；`--path` 默认分别为 `/mcp`、`/sse`。
 `--version` 为 Server 版本，`--protocol-version` 为协议版本，`--ttl` 为心跳秒数。
 能力组装、URL 拼装和退出反注册都使用普通 SDK API；SDK 发现仍使用普通路由。
-兼容矩阵、重试边界和失败路径由 `integration/fixtures/mcp.py` 覆盖，不在公开示例中
-重复实现。关闭前显式反注册并停止心跳，最后销毁自己的 context。
+契约上报后遇到暂时的 `400202 NotFoundResource`，公开示例会在 `--timeout` 内每
+0.2 秒重试；其他契约错误立即抛出。更完整的兼容矩阵和失败路径由
+`integration/fixtures/mcp.py` 覆盖。关闭前显式反注册并停止心跳，最后销毁自己的
+context。
 公开接口说明见 [AI registry](../../docs/guides/ai-registry.md)。
 
 ## 日志与清理

@@ -4,6 +4,32 @@
 验证使用真实 SDK、真实本机 HTTP 服务以及真实 gRPC 请求处理链，只替换注册中心的
 gRPC stub 边界，因此不需要外部 Polaris 服务。
 
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 3 个进程：1 个验证器 + Provider 子进程 + Consumer 子进程；两个 demo 在验证结束时停止。 |
+| 远端 | 3 个进程：1 个验证器 + Provider 子进程 + Consumer 子进程；验证后两者保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | Provider 1 个实例，`127.0.0.1:<动态端口>`，fake ID `quickstart-provider`，TTL 1 秒；Consumer 不注册。 |
+| 远端 | `polaris-python-integration/quickstart-provider-<时间>` | Provider 1 个实例，host 为路由源 IP，动态端口，TTL 1 秒；Consumer 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| Provider → registry | 同步注册、自动心跳和停止时反注册。 |
+| Consumer → registry | 通过 Discover 获取 Provider host/port，并维护本地缓存。 |
+| 验证器 → Consumer `/echo` | 请求 Consumer HTTP 前端；Consumer 再调用 Provider，验证代理链路。 |
+| Consumer → Provider | 真实 HTTP `GET /echo`、`POST /echo-with-body`，检查状态、正文、服务名和请求路径。 |
+| Consumer → 调用结果仓库 | 每次下游调用后上报成功/失败和延迟。 |
+
 ## 脚本作用
 
 下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
@@ -122,7 +148,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 ./integration/verify_e2e.sh --only quickstart
 ```
 
-命名空间默认 `python-integration`。服务名是 `polaris-python-e2e-quickstart-<年月日时分秒毫秒>`。
+命名空间默认 `polaris-python-integration`。服务名是
+`quickstart-provider-<年月日时分秒毫秒>`。
 
 步骤：
 
