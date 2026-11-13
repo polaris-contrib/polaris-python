@@ -4,11 +4,13 @@
 
 ## 运行
 
+从仓库根目录执行：
+
 ```bash
-./run.sh
-./run.sh --config ./polaris.yaml
-./run.sh --default
-./run.sh --no-env
+make -C examples run DEMO=sdkconfig/file
+make -C examples run DEMO=sdkconfig/file ARGS="--config '$PWD/examples/sdkconfig/file/polaris.yaml'"
+make -C examples run DEMO=sdkconfig/file ARGS='--default'
+make -C examples run DEMO=sdkconfig/file ARGS='--no-env'
 ```
 
 - 不传 `--config` 时读取当前 demo 的 `polaris.yaml`。
@@ -50,13 +52,26 @@ global:
 可选真实发现：
 
 ```bash
-POLARIS_E2E=1 ./run.sh --service demo --namespace default
+POLARIS_SERVER_ADDRESS=127.0.0.1:8091 \
+  make -C examples run DEMO=sdkconfig/file ARGS='--service demo --namespace default'
 ```
 
-## 验证与清理
+## 日志与清理
+
+从仓库根目录执行：
 
 ```bash
-./verify.sh
-./logs.sh --latest --tail 30
-./cleanup.sh --force
+make -C examples logs ARGS='--only sdkconfig/file --latest --tail 30'
+make -C examples cleanup ARGS='--only sdkconfig/file --dry-run'
+make -C examples cleanup ARGS='--only sdkconfig/file'
 ```
+
+示例日志保存在本目录 `.logs/run-<时间>-<id>/`，直接执行 `python main.py` 时使用
+`.logs/manual/`。本目录 `make run ARGS='...'` 使用同一运行脚本。
+默认清理先展示并确认，只停止记录的示例 PID 并清除本地生成产物，不删除远端服务。
+
+## 集成验证
+
+从仓库根目录执行 `./integration/verify.sh --only sdkconfig/file`；真实验证使用
+`./integration/verify_e2e.sh --only sdkconfig/file`。测试步骤和集成测试产物见
+[integration/scenarios/sdkconfig/file/test.md](../../../integration/scenarios/sdkconfig/file/test.md)。

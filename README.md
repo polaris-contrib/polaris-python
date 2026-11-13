@@ -158,24 +158,36 @@ See [TLS](docs/guides/tls.md).
 
 ## Examples
 
-Run all offline verifications:
+From the repository root, Quickstart reads its adjacent `polaris.yaml`:
 
 ```bash
-./examples/verify_all.sh
+export POLARIS_SERVER_ADDRESS=127.0.0.1:8091
+export POLARIS_TOKEN=
+make -C examples run DEMO=quickstart/provider ARGS='--service-token "" --port 0'
+# Another terminal with the same environment
+make -C examples run DEMO=quickstart/consumer ARGS='--port 18080'
 ```
 
-Run or inspect a single demo:
+`--service-token` is required; an empty string works when service authentication is
+disabled. Runs stay in the foreground; use separate terminals or `&`.
 
 ```bash
-cd examples/quickstart
-./run.sh --help
-./verify.sh
-./logs.sh --latest --tail 30
-./cleanup.sh --force
+make -C examples logs ARGS='--only quickstart --latest --tail 30'
+make -C examples cleanup ARGS='--only quickstart --dry-run'
+make -C examples cleanup ARGS='--only quickstart'
 ```
 
-Start with [examples/README.md](examples/README.md). Real registry examples require
-`POLARIS_E2E=1`.
+See [examples/README.md](examples/README.md) for demos, Makefiles and log/cleanup options.
+
+Verification and test artifacts belong to `integration/`:
+
+```bash
+./integration/verify.sh --only quickstart
+./integration/verify_e2e.sh --only quickstart
+```
+
+See the [integration guide](integration/README.md) and
+[quickstart tests](integration/scenarios/quickstart/test.md) for checks and test artifacts.
 
 ## License
 

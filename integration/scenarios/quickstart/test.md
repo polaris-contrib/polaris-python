@@ -1,0 +1,165 @@
+# quickstart 测试说明
+
+本目录验证同步 Provider 注册、Consumer 服务发现、HTTP 调用、调用结果上报和退出清理。
+验证使用真实 SDK、真实本机 HTTP 服务以及真实 gRPC 请求处理链，只替换注册中心的
+gRPC stub 边界，因此不需要外部 Polaris 服务。
+
+## 测试拓扑
+
+### 拉起进程
+
+| 阶段 | 进程与生命周期 |
+| --- | --- |
+| 离线 | 3 个进程：1 个验证器 + Provider 子进程 + Consumer 子进程；两个 demo 在验证结束时停止。 |
+| 远端 | 3 个进程：1 个验证器 + Provider 子进程 + Consumer 子进程；验证后两者保持运行。 |
+
+### 创建服务与实例
+
+| 阶段 | 服务 | 实例 |
+| --- | --- | --- |
+| 离线 | `ns/svc` | Provider 1 个实例，`127.0.0.1:<动态端口>`，fake ID `quickstart-provider`，TTL 1 秒；Consumer 不注册。 |
+| 远端 | `polaris-python-integration/quickstart-provider-<时间>` | Provider 1 个实例，host 为路由源 IP，动态端口，TTL 1 秒；Consumer 不注册。 |
+
+### 服务访问与验证
+
+| 访问关系 | 验证内容 |
+| --- | --- |
+| Provider → registry | 同步注册、自动心跳和停止时反注册。 |
+| Consumer → registry | 通过 Discover 获取 Provider host/port，并维护本地缓存。 |
+| 验证器 → Consumer `/echo` | 请求 Consumer HTTP 前端；Consumer 再调用 Provider，验证代理链路。 |
+| Consumer → Provider | 真实 HTTP `GET /echo`、`POST /echo-with-body`，检查状态、正文、服务名和请求路径。 |
+| Consumer → 调用结果仓库 | 每次下游调用后上报成功/失败和延迟。 |
+
+## 脚本作用
+
+下列入口都在仓库的 `integration/` 目录，命令从仓库根目录执行。
+
+| 脚本 | 作用 |
+| --- | --- |
+| `verify.sh` | 运行完整的 quickstart Provider/Consumer 场景。 |
+| `logs.sh` | 查看本次或历史验证的 console、SDK 分类日志和结果。 |
+| `cleanup.sh` | 停止该场景记录的进程并清理对应的 `integration/.logs/`、`integration/.runtime/`；支持 `--keep-logs` 和 `--delete-services`。 |
+
+本目录没有手动示例入口；直接从仓库根目录运行
+`make -C examples run DEMO=quickstart/provider` 或 `quickstart/consumer`。
+
+## 离线验证
+
+验证器在一个隔离目录中启动两个 Python 子进程：
+
+1. Provider 以临时端口启动 HTTP 服务。
+2. Consumer 以另一个临时端口启动 HTTP 代理服务。
+3. Provider 通过 SDK 注册实例并启动心跳。
+4. Consumer 通过 SDK 发现实例。
+5. 验证器请求 Consumer 的真实 HTTP 接口，由 Consumer 再调用 Provider。
+6. 停止两个子进程，检查反注册、调用结果上报和资源释放。
+
+注册中心 RPC 使用 fake stub，但以下行为均走实际实现：
+
+- 配置加载；
+- SDK context 和插件生命周期；
+- Provider 注册、心跳和反注册流程；
+- Consumer 发现缓存和同步调用流程；
+- 本机 HTTP Provider 与 Consumer；
+- 调用结果构造和上报入口。
+
+## 核心断言
+
+验证器会检查：
+
+- 注册请求包含测试服务名、服务令牌和 TTL；
+- Provider 打印的临时端口与后续调用使用的端口一致；
+- `GET /echo` 返回 HTTP 200，正文包含正确的服务名和 Provider 地址；
+- `POST /echo-with-body` 也能发现并调用同一个 Provider；
+- Provider 的 fake RPC 记录中出现 `register`、`heartbeat` 和 `deregister`；
+- Consumer 的 fake RPC 记录中出现 `discover` 和 `report`；
+- 停止进程时没有未结束的子进程或脏退出。
+
+成功时输出：
+
+```text
+PASS synchronous quickstart registration, discovery, call, and cleanup
+```
+
+任一 HTTP 状态、正文、RPC 调用或退出状态不符合预期，验证器返回非零。
+
+## 执行
+
+```bash
+./integration/verify.sh --only quickstart
+./integration/logs.sh --latest --tail 50
+./integration/logs.sh --latest --category network --tail 50
+./integration/cleanup.sh --dry-run
+```
+
+每次运行都会新建 `integration/.logs/quickstart/verify-<时间>-<编号>/`。验证器在 `provider/` 和
+`consumer/` 子目录保存各自的 `stdout.log`、`stderr.log` 和 SDK 日志；
+SDK 日志位于运行目录的 `polaris/log/provider/`、`polaris/log/consumer/`，cache 位于同级的
+`polaris/backup/provider/`、`polaris/backup/consumer/`；外层保存 `console.log`、
+`verification.log` 和 `result.json`。
+
+该验证不连接外部注册中心。设置 `POLARIS_SERVER_ADDRESS` 也不会改变 fake stub
+覆盖的注册中心边界；真实服务端联调应使用 `make -C examples run DEMO=quickstart/provider` 和
+`make -C examples run DEMO=quickstart/consumer`。
+
+## 执行产物与解读
+
+| 产物 | 内容 |
+| --- | --- |
+| `console.log` | 管理程序捕获的合并 stdout/stderr，包含场景顺序、HTTP 结果、`PASS`/`FAIL` 和异常。 |
+| `result.json` | 记录 `exit_code`、`timed_out`、`interrupted` 和 `action`；只有退出码 0 且未超时、未中断才是正常成功。 |
+| `verification.log` | 保存 Provider/Consumer 断言、JSON 汇总和 traceback；`make -C examples run` 和直接运行通常不生成。 |
+
+运行目录还包含 `polaris/log/provider/`、`polaris/log/consumer/`、对应的 `polaris/backup/` 以及嵌套进程
+`stdout.log`/`stderr.log`。先看 `result.json`，再看 `verification.log`。完整规则见
+[执行产物与解读](../../test.md#执行产物与解读)。
+
+## 注册服务与实例
+
+验证器向 fake registry 注册一个服务实例：
+
+| 项目 | 值 |
+| --- | --- |
+| namespace | `ns` |
+| service | `svc` |
+| 实例数 | 1 |
+| Provider host | `127.0.0.1` |
+| Provider port | 参数为 `0`，自动分配；实际端口在 `console.log` 的 `registered.port` |
+| fake instance ID | `quickstart-provider` |
+| TTL | 1 秒 |
+| Consumer | 不注册服务实例，只监听一个自动选择的 HTTP 端口 |
+
+Provider 和 Consumer 的两个实际 HTTP 端口都可在 JSON 输出的 `port` 或 `listen`
+字段找到。fake registry 地址配置为 `127.0.0.1:8091`，但 gRPC stub 被验证器替换，
+因此不会连接该地址。
+
+手动执行时，Provider 默认注册 `default/DiscoverEchoServer`，`--port` 默认 `0`；
+Provider host 是到注册中心建连时使用的本机 IP。Consumer 默认监听 `18080`，它不注册
+实例，只发现 Provider。
+
+## 远端验证
+
+这一路不替换 gRPC。`--only quickstart`、`--only quickstart/provider` 和 `--only quickstart/consumer` 跑的是同一套完整场景，日志分别落在对应目录。
+
+```bash
+export POLARIS_SERVER_ADDRESS=<host>:8091
+export POLARIS_SERVICE_TOKEN=<service-token>
+export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
+./integration/verify_e2e.sh --only quickstart
+```
+
+命名空间默认 `polaris-python-integration`。服务名是
+`quickstart-provider-<年月日时分秒毫秒>`。
+
+步骤：
+
+1. 启动 `provider/main.py`。它读旁边的 `polaris.yaml`，地址占位符换成 `POLARIS_SERVER_ADDRESS`。HTTP 监听 `0.0.0.0` 的动态端口，注册 host 是连上注册中心时选出的本机 IP，TTL 1 秒，协议 http。打印 `instance_id`、`host`、`port` 后进程保持运行并继续心跳。
+2. 另起 SDK context，每 0.5 秒用不带缓存的发现探测，连接超时 2 秒、API 超时 3 秒，最多 20 秒。返回列表里出现同一个 instance id 才继续。
+3. 在动态本机端口启动 Consumer。验证器自己请求 `http://127.0.0.1:<consumer端口>/echo`，最多 10 秒。Consumer 再去发现并调用 Provider。
+4. 两个进程这时都必须还活着。验证器不反注册，也不销毁它们。
+
+通过条件：HTTP 状态 200，响应正文包含本次服务名。JSON 含 `service`、`provider.instance_id`、`provider.host`、`provider.port`、`consumer_port`、`http_status` 和 `effect`。离线验证里的显式反注册、心跳次数和 fake instance id `quickstart-provider` 不在这一路检查。
+
+运行目录是 `integration/.logs/quickstart/verify-e2e-<时间>-<编号>/`。`result.json` 的
+`exit_code` 为 0 才通过。停进程用 `./integration/cleanup.sh --force`；删 Polaris 服务用
+`--delete-services`。发现超时或 `/echo` 不是 200 会非零退出。

@@ -22,10 +22,11 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 
 import argparse
 import json
+import os
 import signal
 import threading
 import time
@@ -33,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-from polaris.api.consumer import ConsumerAPI, create_consumer_by_config
+from polaris.api.consumer import create_consumer_by_config
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.service import GetOneInstanceRequest, RetStatus, ServiceCallResult
 
@@ -45,8 +46,10 @@ class ConsumerHandler(BaseHTTPRequestHandler):
     timeout = 2.0
 
     def _call(self, namespace: str, service: str) -> tuple[bytes, int]:
+        discovery_timeout = int(os.getenv("POLARIS_API_TIMEOUT", "5000"))
         instance = self.consumer.get_one_instance(GetOneInstanceRequest(
-            namespace=namespace, service=service, timeout=5000, use_discover_cache=True,
+            namespace=namespace, service=service, timeout=discovery_timeout,
+            use_discover_cache=True,
         ))
         if instance is None:
             raise RuntimeError("no available provider instance")
@@ -135,7 +138,6 @@ def main() -> int:
     try:
         config_path = args.config or Path(__file__).with_name("polaris.yaml")
         config = Configuration.from_file(str(config_path))
-        configure_e2e_event_reporting(config)
         config.get_consumer().get_local_cache().persist_dir = str(
             demo_backup_directory(__file__, component="consumer")
         )

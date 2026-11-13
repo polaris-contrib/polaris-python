@@ -22,12 +22,11 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
 import json
-import os
 import signal
 from collections import Counter
 
@@ -37,15 +36,14 @@ from polaris import Configuration, create_consumer_by_config
 from polaris.pkg.model.service import GetOneInstanceRequest
 
 
-async def run(args, stop=None):
+async def run(args):
     """Continuously select and invoke one provider instance."""
-    stop = stop or asyncio.Event()
+    stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
 
     config = Configuration.from_file(str(args.config))
-    configure_e2e_event_reporting(config)
     config.get_consumer().get_local_cache().persist_dir = str(
         demo_backup_directory(__file__, component="consumer")
     )
@@ -99,9 +97,6 @@ def main(argv=None):
         parser.error("--namespace and --service must not be empty")
     if args.interval <= 0 or args.timeout <= 0:
         parser.error("--interval and --timeout must be positive")
-    if os.getenv("POLARIS_E2E") != "1":
-        print(json.dumps({"skipped": True, "reason": "Set POLARIS_E2E=1 to connect to Polaris"}))
-        return 0
     return asyncio.run(run(args))
 
 

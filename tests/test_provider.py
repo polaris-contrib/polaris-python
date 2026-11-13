@@ -221,6 +221,34 @@ def test_registration_rejects_invalid_ttl(provider_runtime, ttl):
     assert stub.calls == []
 
 
+@pytest.mark.parametrize("port", [1, 65535])
+def test_instance_address_requests_accept_valid_port_boundaries(port):
+    InstanceRegisterRequest("svc", "service-token", "ns", "127.0.0.1", port).validate()
+    InstanceHeartbeatRequest("svc", "service-token", "ns", "", "127.0.0.1", port).validate()
+    InstanceDeRegisterRequest("svc", "service-token", "ns", "127.0.0.1", port).validate()
+
+
+@pytest.mark.parametrize("port", [-1, 0, 65536])
+def test_instance_address_requests_reject_invalid_ports(port):
+    requests = [
+        InstanceRegisterRequest("svc", "service-token", "ns", "127.0.0.1", port),
+        InstanceHeartbeatRequest("svc", "service-token", "ns", "", "127.0.0.1", port),
+        InstanceDeRegisterRequest("svc", "service-token", "ns", "127.0.0.1", port),
+    ]
+    for request in requests:
+        with pytest.raises(SDKError, match="port should be in range"):
+            request.validate()
+
+
+@pytest.mark.parametrize("port", [0, 65536])
+def test_registration_rejects_invalid_port_before_rpc(provider_runtime, port):
+    provider, engine, stub = provider_runtime
+    request = InstanceRegisterRequest("svc", "service-token", "ns", "127.0.0.1", port)
+    with pytest.raises(SDKError, match="port should be in range"):
+        provider.register_instance(request)
+    assert stub.calls == []
+
+
 @pytest.mark.parametrize("method,request_factory", [
     ("register", registration), ("register_instance", registration),
     ("heartbeat", heartbeat_request), ("deregister", deregistration),

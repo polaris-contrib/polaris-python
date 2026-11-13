@@ -756,8 +756,18 @@ async def test_provider_api_lossless_register_and_deregister(monkeypatch, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_repeated_lossless_register_uses_latest_request(monkeypatch, tmp_path):
+@pytest.mark.parametrize("response_delay", [0, 0.05], ids=["immediate-response", "delayed-response"])
+async def test_repeated_lossless_register_uses_latest_request(monkeypatch, tmp_path, response_delay):
     stub = RegisterStub()
+    register_instance = stub.RegisterInstance
+
+    async def register_response(request, timeout=None, metadata=()):
+        response = await register_instance(request, timeout=timeout, metadata=metadata)
+        if response_delay:
+            await asyncio.sleep(response_delay)
+        return response
+
+    monkeypatch.setattr(stub, "RegisterInstance", register_response)
     context = make_context(
         monkeypatch, tmp_path, stub, admin_port=-1, delayRegisterInterval="1ms",
     )
@@ -770,23 +780,23 @@ async def test_repeated_lossless_register_uses_latest_request(monkeypatch, tmp_p
     second.metadata = {"version": "v2"}
     second.service_token = "new-token"
 
-    async def wait_for_registrations(count):
+    async def wait_for_registrations(count, instance):
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             registrations = [request for method, request, _ in stub.calls if method == "RegisterInstance"]
-            if len(registrations) >= count:
+            if len(registrations) >= count and instance.instance_id:
                 return registrations
             await asyncio.sleep(0.01)
         raise AssertionError("registration did not complete")
 
     try:
         await provider.async_lossless_register(first)
-        await wait_for_registrations(1)
+        await wait_for_registrations(1, first)
         await provider.async_lossless_deregister(first)
         assert not stub.instances
 
         await provider.async_lossless_register(second)
-        registrations = await wait_for_registrations(2)
+        registrations = await wait_for_registrations(2, second)
         assert [request.weight.value for request in registrations] == [100, 700]
         assert registrations[1].metadata["version"] == "v2"
         assert registrations[1].service_token.value == "new-token"

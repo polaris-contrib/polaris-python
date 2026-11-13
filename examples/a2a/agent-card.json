@@ -2,8 +2,23 @@
   "name": "document-agent",
   "description": "Document search agent",
   "version": "1.0.0",
-  "url": "http://127.0.0.1:8080/a2a",
-  "preferredTransport": "JSONRPC",
+  "supportedInterfaces": [
+    {
+      "url": "http://127.0.0.1:8080/a2a/v1",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    },
+    {
+      "url": "http://127.0.0.1:8080/a2a/legacy",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "0.3"
+    },
+    {
+      "url": "http://127.0.0.1:8080/rest",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "1.0"
+    }
+  ],
   "capabilities": {"streaming": false},
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain"],

@@ -151,24 +151,36 @@ instance = consumer.get_one_instance(GetOneInstanceRequest(
 
 ## 示例
 
-运行全部离线验证：
+从仓库根目录执行，Quickstart 读取相邻的 `polaris.yaml`：
 
 ```bash
-./examples/verify_all.sh
+export POLARIS_SERVER_ADDRESS=127.0.0.1:8091
+export POLARIS_TOKEN=
+make -C examples run DEMO=quickstart/provider ARGS='--service-token "" --port 0'
+# 另一个终端设置相同环境后执行
+make -C examples run DEMO=quickstart/consumer ARGS='--port 18080'
 ```
 
-运行或查看单个 demo：
+`--service-token` 必填；未开启服务鉴权时可传空字符串。
+脚本以前台运行，多进程示例使用多个终端或 `&`。
 
 ```bash
-cd examples/quickstart
-./run.sh --help
-./verify.sh
-./logs.sh --latest --tail 30
-./cleanup.sh --force
+make -C examples logs ARGS='--only quickstart --latest --tail 30'
+make -C examples cleanup ARGS='--only quickstart --dry-run'
+make -C examples cleanup ARGS='--only quickstart'
 ```
 
-入口见 [examples/README-zh.md](examples/README-zh.md)。连接真实注册中心的示例需要
-`POLARIS_E2E=1`。
+示例目录、Makefile 和日志清理选项见 [examples/README-zh.md](examples/README-zh.md)。
+
+验证与集成测试产物由 `integration/` 管理：
+
+```bash
+./integration/verify.sh --only quickstart
+./integration/verify_e2e.sh --only quickstart
+```
+
+测试步骤与产物说明见 [集成测试说明](integration/README-zh.md) 和
+[quickstart 测试](integration/scenarios/quickstart/test.md)。
 
 ## 许可证
 

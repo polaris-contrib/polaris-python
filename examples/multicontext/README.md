@@ -1,5 +1,7 @@
 # Multiple Contexts
 
+[中文](README-zh.md)
+
 Creates two independent SDK contexts with separate:
 
 - addresses and tokens
@@ -10,37 +12,40 @@ Creates two independent SDK contexts with separate:
 The first context is deregistered and destroyed while the second continues heartbeats
 and discovery. The second context is then cleaned up.
 
-## Verify
-
-```bash
-./verify.sh
-```
-
-The offline verifier uses a fake registry boundary and checks:
-
-- isolated client IDs, channels, requests, and instances
-- heartbeat after one context is destroyed
-- API rejection after destruction
-- release of threads, streams, cache locks, plugins, and log handles
-
 ## Real Registry
 
+From the repository root:
+
 ```bash
-export POLARIS_E2E=1
-export POLARIS_FIRST_SERVER=127.0.0.1:8091
+export export POLARIS_FIRST_SERVER=127.0.0.1:8091
 export POLARIS_SECOND_SERVER=127.0.0.1:8091
 export POLARIS_FIRST_SERVICE_TOKEN=service-token
 export POLARIS_SECOND_SERVICE_TOKEN=service-token
 
-./run.sh --namespace default --service multicontext-example
+make -C examples run DEMO=multicontext ARGS='--namespace default --service multicontext-example'
 ```
 
-Both processes use their own `consumer.localCache.persistDir` and log directory.
+Both contexts in this process use their own `consumer.localCache.persistDir` and log directory.
 Destroying one context does not close the other.
 
 ## Logs And Cleanup
 
+From the repository root:
+
 ```bash
-./logs.sh --latest --tail 30
-./cleanup.sh --force
+make -C examples logs ARGS='--only multicontext --latest --tail 30'
+make -C examples cleanup ARGS='--only multicontext --dry-run'
+make -C examples cleanup ARGS='--only multicontext'
 ```
+
+Example logs live in `.logs/run-<timestamp>-<id>/` in this demo; direct
+`python main.py` runs use `.logs/manual/`. Cleanup confirms by default and only
+stops recorded demo PIDs and removes local generated artifacts. It does not
+delete remote services.
+
+## Verify
+
+From the repository root, run `./integration/verify.sh --only multicontext`, or
+`./integration/verify_e2e.sh --only multicontext` against a real registry.
+Test coverage and integration test artifacts are documented in
+[integration/scenarios/multicontext/test.md](../../integration/scenarios/multicontext/test.md).

@@ -97,7 +97,9 @@ def _create_file_logger(name, path, level, max_bytes, backup_count, max_age_days
     path.parent.mkdir(parents=True, exist_ok=True)
     handler = ExclusiveRotatingFileHandler(path, "a", max_bytes, backup_count,
                                           encoding="utf-8", max_age_days=max_age_days)
-    handler.setFormatter(logging.Formatter("[%(asctime)s][%(levelname)s][%(process)d]: %(message)s"))
+    handler.setFormatter(logging.Formatter(
+        "[%(asctime)s][%(levelname)s][%(process)d][%(filename)s:%(lineno)d]: %(message)s"
+    ))
     instance = logging.Logger(name, level=level)
     instance.addHandler(handler)
     instance.propagate = False

@@ -3,32 +3,45 @@
 [中文](README-zh.md)
 
 Query an existing published Skill, list matching resources and download its ZIP package
-through a separate Skill gRPC connection. Offline verification also starts a new context
-and checks network-error fallback using complete persisted payloads.
+through a separate Skill gRPC connection. Complete persisted payloads support
+network-error fallback for queries and downloads; lists do not fall back.
 With `--mounted-service`, the example first discovers that service, resolves its mounted
 Skill, and prefers the mounted version over `--version`; an empty version uses active.
 
-```bash
-./examples/verify.sh --only skill
-POLARIS_SERVER_ADDRESS=<host>:8091 \
-./examples/verify_e2e.sh --only skill
-```
-
 `POLARIS_SKILL_TOKEN` defaults to `POLARIS_TOKEN`; `POLARIS_SKILL_VERSION` may select
 a published version. These Skill environment variables are example options, not automatic
-SDK configuration overrides. The real example reads only and does not upload or publish.
-The Skill address defaults to the registry host on port 8094. In the E2E verifier,
-`POLARIS_SKILL_NAMESPACE` defaults to the isolated E2E namespace for automatic discovery
-and fixtures; when `POLARIS_SKILL_NAME` is supplied without a namespace, `default` is used.
-If no name is supplied, verification selects the first published resource in that
-namespace. If none exists, E2E creates and publishes a
-persistent `polaris-python-e2e-skill-fixture` through the commercial console API and
-reuses it on later runs. The SDK API itself remains read-only.
+SDK configuration overrides. The example reads only and does not upload or publish.
+Set `--skill-server` or `POLARIS_SKILL_SERVER_ADDRESS` for the Skill connection;
+the demo default is `127.0.0.1:8094`. Select an existing published resource with
+`--namespace`, `--name` and optionally `--version`.
+
+From the repository root:
 
 ```bash
-POLARIS_E2E=1 make -C examples/skill run \
-  ARGS="--skill-server <host>:8094 --namespace default --name lookup"
+make -C examples run DEMO=skill ARGS='--skill-server 127.0.0.1:8094 --namespace default --name lookup'
 ```
 
-See [test.md](test.md) for checks and artifacts, and [AI registry APIs](../../docs/guides/ai-registry.md)
-for code configuration, version selection and fallback behavior.
+See [AI registry APIs](../../docs/guides/ai-registry.md) for code configuration,
+version selection and fallback behavior.
+
+## Logs And Cleanup
+
+From the repository root:
+
+```bash
+make -C examples logs ARGS='--only skill --latest --tail 30'
+make -C examples cleanup ARGS='--only skill --dry-run'
+make -C examples cleanup ARGS='--only skill'
+```
+
+Example logs and backups live in this demo's `.logs/run-<timestamp>-<id>/`;
+direct `python main.py` runs use `.logs/manual/`. Cleanup confirms by default and
+only stops recorded demo PIDs and removes local generated artifacts. It does not
+delete remote services or published Skills.
+
+## Verify
+
+From the repository root, run `./integration/verify.sh --only skill`, or
+`./integration/verify_e2e.sh --only skill` against a real registry. Test steps,
+E2E fixture behavior and integration test artifacts are documented in
+[integration/scenarios/skill/test.md](../../integration/scenarios/skill/test.md).

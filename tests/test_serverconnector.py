@@ -32,6 +32,7 @@ from polarismesh_specification.api.v1.service_manage import (
 from polaris.api import log
 from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.server import InstanceDiscoverRequest, InstanceRegisterRequest
+from polaris.plugin.server_connector.grpc_connector import connection as connection_module
 from polaris.plugin.server_connector.grpc_connector.connection import GrpcConnection, GrpcSettings
 from polaris.plugin.server_connector.grpc_connector.grpc_client import GrpcConnector
 from polaris.plugin_manager import InitContext
@@ -282,7 +283,7 @@ async def test_unary_retry_logs_to_context_network_category(tmp_path):
 async def test_report_client_success_logs_to_base_category(tmp_path):
     context_log = log.ContextLogger("client", log.LogOptions(level="debug", log_dir=tmp_path))
     connection = GrpcConnection(
-        GrpcSettings(addresses=["registry:8091"], timeout_seconds=1),
+        GrpcSettings(addresses=["registry:8091"], timeout_seconds=1, token="secret-token"),
         context_logger=context_log,
     )
 
@@ -299,7 +300,19 @@ async def test_report_client_success_logs_to_base_category(tmp_path):
 
     connection._stub = stub
     try:
-        response = await connection.report_client(client_pb2.Client())
+        request = client_pb2.Client(
+            host={"value": "127.0.0.1"},
+            id={"value": "client-a"},
+            type=client_pb2.Client.SDK,
+            version={"value": "1.2.3"},
+        )
+        request.stat.add(
+            target={"value": "prometheus"},
+            port={"value": 9091},
+            path={"value": "/metric"},
+            protocol={"value": "http"},
+        )
+        response = await connection.report_client(request)
         assert response.code.value == 200000
         base = context_log.get_logger("base").file_path.read_text()
         network = context_log.get_logger("network").file_path.read_text()
@@ -307,8 +320,92 @@ async def test_report_client_success_logs_to_base_category(tmp_path):
         assert "location=region-a/zone-a/campus-a" in base
         base_line = next(line for line in base.splitlines() if "reportClient success" in line)
         network_line = next(line for line in network.splitlines() if "Polaris ReportClient success" in line)
+        assert "requestId=3" in base_line
+        assert "clientId=client-a" in base_line
+        assert "host=127.0.0.1" in base_line
+        assert "clientType=SDK" in base_line
+        assert "clientVersion=1.2.3" in base_line
+        assert "stats=http://prometheus:9091/metric" in base_line
+        assert '"id": "client-a"' in base
+        assert '"location"' in base
+        assert "secret-token" not in base
+        assert "secret-token" not in network
+        assert "[connection.py:" in base_line
+        assert "[connection.py:" in network_line
         assert "[INFO]" in base_line
         assert "[DEBUG]" in network_line
+    finally:
+        await connection.close()
+        context_log.close()
+
+
+@pytest.mark.asyncio
+async def test_report_client_success_log_changes_content_or_interval(
+    tmp_path, monkeypatch,
+):
+    context_log = log.ContextLogger("client", log.LogOptions(level="info", log_dir=tmp_path))
+    connection = GrpcConnection(
+        GrpcSettings(addresses=["registry:8091"], timeout_seconds=1),
+        context_logger=context_log,
+    )
+    state = {"failed": False}
+
+    class Stub:
+        async def ReportClient(self, request, timeout=None, metadata=()):
+            code = 500000 if state["failed"] else 200000
+            return response_pb2.Response(code={"value": code})
+
+    async def stub(address):
+        return Stub()
+
+    clock = [100.0]
+    monkeypatch.setattr(connection_module.time, "monotonic", lambda: clock[0])
+    connection._stub = stub
+
+    def request(version="1.2.3"):
+        return client_pb2.Client(
+            host={"value": "127.0.0.1"},
+            id={"value": "client-a"},
+            type=client_pb2.Client.SDK,
+            version={"value": version},
+        )
+
+    def success_lines():
+        base = context_log.get_logger("base").file_path.read_text()
+        return [line for line in base.splitlines() if "reportClient success" in line]
+
+    try:
+        interval = connection_module.REPORT_CLIENT_LOG_INTERVAL_SECONDS
+        assert interval == 30 * 60
+
+        await connection.report_client(request())
+        assert len(success_lines()) == 1
+
+        clock[0] += interval - 1
+        await connection.report_client(request())
+        assert len(success_lines()) == 1
+
+        clock[0] += 1
+        await connection.report_client(request())
+        assert len(success_lines()) == 2
+
+        clock[0] += 1
+        await connection.report_client(request(version="2.0.0"))
+        lines = success_lines()
+        assert len(lines) == 3
+        assert "clientVersion=2.0.0" in lines[-1]
+
+        clock[0] += interval - 1
+        await connection.report_client(request(version="2.0.0"))
+        assert len(success_lines()) == 3
+
+        state["failed"] = True
+        clock[0] += 1
+        await connection.report_client(request(version="2.0.0"))
+        state["failed"] = False
+        clock[0] += 1
+        await connection.report_client(request(version="2.0.0"))
+        assert len(success_lines()) == 4
     finally:
         await connection.close()
         context_log.close()

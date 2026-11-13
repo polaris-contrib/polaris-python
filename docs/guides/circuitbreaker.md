@@ -76,7 +76,7 @@ consumer.update_service_call_result(ServiceCallResult(
 ## 验证
 
 ```bash
-./examples/verify.sh --only circuitbreaker
+./integration/verify.sh --only circuitbreaker
 uv run pytest -q tests/test_circuitbreaker.py -W error::RuntimeWarning
 ```
 

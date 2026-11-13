@@ -44,6 +44,9 @@ examples/**/.runtime/
 examples/**/.build/
 examples/**/bin
 examples/**/x86-bin
+integration/.logs/
+integration/.runtime/
+integration/**/.build/
 polaris.log
 polaris-*.log
 /polaris

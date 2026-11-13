@@ -31,7 +31,7 @@ from polaris.pkg.model.service import Instance
 from polaris.plugin.event.pushgateway import PushGatewayEventReporter
 from polaris.plugin_manager import InitContext, PluginManager
 from polaris import init_context_by_config
-from examples._internal._ai_stub import AIStub
+from integration._ai_stub import AIStub
 from polaris.plugin.server_connector.grpc_connector.connection import GrpcConnection
 
 

@@ -2,27 +2,103 @@
 
 [中文](README-zh.md)
 
-This example uses ordinary Provider/Consumer APIs to register an already-running
-agent endpoint, discover its Instance and decode the JSON card carried in metadata.
-It does not provide an A2A SDK, fetch a remote AgentCard or invoke an agent.
+This example starts a real local A2A Provider, generates an instance-level
+AgentCard from the bound host and port, registers one ordinary Polaris Instance,
+then discovers and validates the same Instance and card. It provides three
+callable interfaces:
 
-Run the offline verification:
+| Interface | Path | Message binding |
+| --- | --- | --- |
+| A2A JSON-RPC 1.0 | `/a2a/v1` | `SendMessage` |
+| A2A JSON-RPC 0.3 | `/a2a/legacy` | `message/send` |
+| A2A HTTP+JSON 1.0 | `/rest` (base URL) | POST `/rest/message:send` |
+
+All three interfaces use the same IP and listening port, proving that multiple
+transports remain in one AgentCard and produce one Polaris instance. The card is
+also available at `/.well-known/agent-card.json`.
+
+Start and register the generated Provider from the repository root:
 
 ```bash
-./examples/verify.sh --only a2a
+POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
+  make -C examples run DEMO=a2a ARGS="--namespace default --duration 60"
 ```
 
-Register an existing endpoint explicitly:
+The process binds `--host` and `--port` (default `127.0.0.1:0`), rewrites the
+three canonical interfaces to the actual address, and prints the callable
+endpoints. One AgentCard registers one instance: `service` comes from
+`AgentCard.name`, `host` comes from the interfaces, `version` comes from
+`AgentCard.version`, and `protocol` stays empty. The instance identity port
+defaults to `registration_port=1`; use `--registration-port` when separate
+versions need to coexist.
+
+Invoke the JSON-RPC 1.0 interface:
 
 ```bash
-POLARIS_E2E=1 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
-  make -C examples/a2a run ARGS="--namespace default --service demo-agent --card agent-card.json"
+curl -sS http://127.0.0.1:<业务端口>/a2a/v1 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"request-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
 ```
 
-Set host, port, transport, path and card to the actual endpoint. The SDK automatically
-heartbeats at TTL 5 seconds; the example explicitly deregisters before destroying its
-context after `--duration` (default 6 seconds). Context destruction alone does not deregister.
+JSON-RPC 0.3 uses `message/send` at `/a2a/legacy`, with legacy text parts:
 
-Metadata uses `ai-agent-name`, `a2a.agent.card`, `a2a.transport` and `a2a.path`.
-The card JSON is application data, not a new SDK request model.
-Logs and backups remain in this demo's `.logs/` directory. See [test.md](test.md).
+```json
+{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"request-1","role":"user","parts":[{"kind":"text","text":"hello"}]}}}
+```
+
+HTTP+JSON 1.0 publishes `/rest` as its base URL. Send messages to
+`/rest/message:send`:
+
+```bash
+curl -sS http://127.0.0.1:<业务端口>/rest/message:send \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"messageId":"request-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}'
+```
+
+Both 1.0 bindings return a `SendMessageResponse` containing `{"message": {...}}`,
+inside JSON-RPC `result` or directly in the REST response body. The inner 1.0
+Message has no `kind` field. The 0.3 binding returns a direct Message with
+`kind=message` and `kind=text` parts. `/rest` and `/rest/v1/message:send` remain
+available as aliases.
+
+Use `--no-serve` to register an already-running external Agent. In that mode the
+card is used as-is and the example does not bind or serve the three interfaces.
+
+Multi-port grouping, mixed-schema validation and peer-instance selection are integration
+fixture behavior and are not repeated in this example.
+
+The included `agent-card.json` is an A2A 1.0 card with the three canonical
+interfaces on `127.0.0.1:8080`. `--serve` replaces those URLs with the actual
+bound host and port. Select the 0.3 card schema with `--a2a-version 0.3`.
+
+Application metadata contains the required keys `ai-agent-name`, `ai-agent-card`, and
+`ai-a2a-version`. Discovery may also include server-managed `region`, `zone`, `campus`,
+and `version` keys.
+Callers discover the endpoint from the card interfaces, never from
+`instance.host:instance.port`. The SDK automatically heartbeats at TTL 5 seconds; the
+example explicitly deregisters before destroying its context after `--duration`
+(default 6 seconds). `--keep-running` waits for SIGINT/SIGTERM instead, which keeps
+the process and instance registered until cleanup. Context destruction alone does not
+deregister.
+
+## Logs And Cleanup
+
+From the repository root:
+
+```bash
+make -C examples logs ARGS='--only a2a --latest --tail 30'
+make -C examples cleanup ARGS='--only a2a --dry-run'
+make -C examples cleanup ARGS='--only a2a'
+```
+
+Example logs live in this demo's `.logs/run-<timestamp>-<id>/`; direct
+`python main.py` runs use `.logs/manual/`. Cleanup confirms by default and only
+stops recorded demo PIDs and removes local generated artifacts. It does not delete
+remote services.
+
+## Verify
+
+From the repository root, run `./integration/verify.sh --only a2a`, or
+`./integration/verify_e2e.sh --only a2a` against a real registry. Test steps and
+integration test artifacts are documented in
+[integration/scenarios/a2a/test.md](../../integration/scenarios/a2a/test.md).

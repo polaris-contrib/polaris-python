@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[3] / "src"), str(Path(__file__).resolve().parents[3])]
-from examples._internal._runtime import configure_e2e_event_reporting, demo_backup_directory, demo_log_options
+from examples._support import demo_backup_directory, demo_log_options
 
 import argparse
 import asyncio
@@ -33,29 +33,22 @@ from polaris.pkg.config.api import Configuration
 from polaris.pkg.model.error import SDKError
 from polaris.pkg.model.service import GetOneInstanceRequest, RetStatus, ServiceCallResult
 
-CONSUMER_INSTANCE = None
-
-
 def get_api():
-    global CONSUMER_INSTANCE
-    if not CONSUMER_INSTANCE:
-        config = Configuration()
-        config.set_default()
-        configure_e2e_event_reporting(config)
-        connector = config.get_global().get_server_connector()
-        connector.addresses = [os.getenv("POLARIS_SERVER", "127.0.0.1:8091")]
-        connector.token = os.getenv("POLARIS_TOKEN", "")
-        connector.connect_timeout = 2 * 1000
-        config.get_global().get_admin().port = 0
-        config.get_consumer().get_load_balancer().type = "random"
-        config.get_consumer().get_local_cache().persist_dir = str(
-            demo_backup_directory(__file__, component="random")
-        )
-        CONSUMER_INSTANCE = create_consumer_by_config(
-            config,
-            log_options=demo_log_options(__file__, level=LogLevel.Warn, component="random"),
-        )
-    return CONSUMER_INSTANCE
+    config = Configuration()
+    config.set_default()
+    connector = config.get_global().get_server_connector()
+    connector.addresses = [os.getenv("POLARIS_SERVER", "127.0.0.1:8091")]
+    connector.token = os.getenv("POLARIS_TOKEN", "")
+    connector.connect_timeout = 2 * 1000
+    config.get_global().get_admin().port = 0
+    config.get_consumer().get_load_balancer().type = "random"
+    config.get_consumer().get_local_cache().persist_dir = str(
+        demo_backup_directory(__file__, component="random")
+    )
+    return create_consumer_by_config(
+        config,
+        log_options=demo_log_options(__file__, level=LogLevel.Warn, component="random"),
+    )
 
 
 async def get_one_instance(consumer_client: ConsumerAPI, namespace: str, service: str):

@@ -1,6 +1,8 @@
 global:
   admin:
     port: -1
+  statReporter:
+    enable: false
   serverConnector:
     addresses: ["${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}"]
     token: "${POLARIS_TOKEN:}"

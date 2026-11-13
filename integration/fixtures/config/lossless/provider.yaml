@@ -1,0 +1,18 @@
+global:
+  admin:
+    host: 127.0.0.1
+    port: 28080
+  serverConnector:
+    addresses: ["${POLARIS_SERVER_ADDRESS:127.0.0.1:8091}"]
+    token: "${POLARIS_TOKEN:}"
+  api:
+    timeout: 2s
+consumer:
+  localCache:
+    persistDir: ./.logs/manual/backup/provider
+provider:
+  lossless:
+    enable: true
+    strategy: DELAY_BY_HEALTH_CHECK
+    healthCheckInterval: 1s
+    healthCheckPath: /ready

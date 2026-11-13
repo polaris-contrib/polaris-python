@@ -14,6 +14,7 @@
 # specific language governing permissions and limitations under the License.
 
 import asyncio
+import inspect
 import logging
 import multiprocessing
 import os
@@ -97,6 +98,20 @@ def test_context_logging_captures_environment_per_creation(monkeypatch, tmp_path
     assert "[clientId=first] only-first" in first.file_path.read_text()
     assert "hidden" not in second.file_path.read_text()
     assert "[clientId=second] only-second" in second.file_path.read_text()
+
+
+def test_context_log_entries_include_source_location(tmp_path):
+    context = log.ContextLogger("client", log.LogOptions(file_path=tmp_path / "client.log"))
+    try:
+        expected_line = inspect.currentframe().f_lineno + 1
+        context.info("located entry")
+    finally:
+        context.close()
+    line = next(
+        line for line in context.file_path.read_text().splitlines()
+        if "located entry" in line
+    )
+    assert f"[test_log.py:{expected_line}]" in line
 
 
 def test_context_log_file_can_be_reused_only_after_owner_closes(tmp_path):
