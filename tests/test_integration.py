@@ -273,6 +273,91 @@ def test_real_verification_mcp_cli_timeout_uses_scenario_environment(monkeypatch
     assert recorded["timeout"] == 135
 
 
+@pytest.mark.parametrize(("invalid_interface", "legacy_shape"), [
+    (None, False),
+    ("jsonrpc_v1", False),
+    ("jsonrpc_v1", True),
+    ("http_json_v1", False),
+    ("http_json_v1", True),
+])
+def test_real_a2a_verification_uses_standard_bindings_and_rejects_invalid_responses(
+    tmp_path, monkeypatch, invalid_interface, legacy_shape,
+):
+    from integration import _real_verify as real
+
+    base = "http://127.0.0.1:18080"
+    endpoints = {
+        "jsonrpc_v1": f"{base}/a2a/v1",
+        "jsonrpc_v03": f"{base}/a2a/legacy",
+        "http_json_v1": f"{base}/rest",
+    }
+    result = {
+        "instance_id": "registered-instance",
+        "transport": "JSONRPC",
+        "port": 1,
+        "protocol": "",
+        "a2a_version": "1.0",
+        "endpoint": endpoints["jsonrpc_v1"],
+        "endpoints": endpoints,
+        "host": "127.0.0.1",
+    }
+    urls = {
+        endpoints["jsonrpc_v1"]: ("jsonrpc_v1", "SendMessage", "v1"),
+        endpoints["jsonrpc_v03"]: ("jsonrpc_v03", "message/send", "v03"),
+        f"{base}/rest/message:send": ("http_json_v1", None, "rest"),
+    }
+    calls = []
+
+    def post_json(url, payload):
+        interface, method, text = urls[url]
+        calls.append(interface)
+        if method:
+            assert payload["method"] == method
+            request = payload["params"]["message"]
+        else:
+            request = payload["message"]
+        assert request["messageId"]
+        assert request["parts"][0]["text"] == text
+        legacy = interface == "jsonrpc_v03"
+        if legacy:
+            assert request["kind"] == "message"
+            assert request["parts"][0]["kind"] == "text"
+        transport = "HTTP+JSON" if method is None else "JSONRPC"
+        message = {
+            "messageId": "response-message",
+            "contextId": "response-context",
+            "role": "agent" if legacy else "ROLE_AGENT",
+            "parts": [{"text": f"A2A {'0.3' if legacy else '1.0'} {transport} echo: {text}"}],
+        }
+        if legacy:
+            message["kind"] = "message"
+            message["parts"][0]["kind"] = "text"
+        if interface == invalid_interface and legacy_shape:
+            message["kind"] = "message"
+        response = message if legacy else {"message": message}
+        if interface == invalid_interface and not legacy_shape:
+            response = message
+        if method:
+            response = {"jsonrpc": "2.0", "id": payload["id"], "result": response}
+        return 200, response
+
+    monkeypatch.setattr(real, "get_local_host", lambda _address: "127.0.0.1")
+    monkeypatch.setattr(real, "assert_instance_host", lambda *_args: None)
+    monkeypatch.setattr(real, "start_demo", lambda *_args, **_kwargs: (
+        SimpleNamespace(poll=lambda: None), result,
+    ))
+    monkeypatch.setattr(real, "post_json", post_json)
+    env = {"POLARIS_DEMO_RUN_DIR": str(tmp_path)}
+    if invalid_interface:
+        expected = "1.0 Message" if legacy_shape else "SendMessageResponse"
+        with pytest.raises(AssertionError, match=expected):
+            real.run_scenario("a2a", "registry:8091", "", "ns", env)
+    else:
+        verified = real.run_scenario("a2a", "registry:8091", "", "ns", env)
+        assert verified["interfaces"] == sorted(endpoints)
+        assert calls == ["jsonrpc_v1", "jsonrpc_v03", "http_json_v1"]
+
+
 def test_real_verification_startup_budget_covers_api_timeout_and_outer_budget():
     from integration import _real_verify as real
 

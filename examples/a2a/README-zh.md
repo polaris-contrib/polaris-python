@@ -8,9 +8,9 @@ AgentCard，通过普通 Provider/Consumer 注册并发现一个 Polaris Instanc
 
 | 接口 | 路径 | 消息绑定 |
 | --- | --- | --- |
-| A2A JSON-RPC 1.0 | `/a2a/v1` | `message/send` |
+| A2A JSON-RPC 1.0 | `/a2a/v1` | `SendMessage` |
 | A2A JSON-RPC 0.3 | `/a2a/legacy` | `message/send` |
-| A2A HTTP+JSON 1.0 | `/rest` | message-send JSON body |
+| A2A HTTP+JSON 1.0 | `/rest`（基址） | POST `/rest/message:send` |
 
 三个接口共享同一个 IP 和业务端口，用于验证多 transport 仍保留在一张 AgentCard
 中，并且只注册一个 Polaris 实例。AgentCard 也可从
@@ -34,20 +34,27 @@ POLARIS_SERVER_ADDRESS=127.0.0.1:8091 POLARIS_SERVICE_TOKEN=token \
 ```bash
 curl -sS http://127.0.0.1:<业务端口>/a2a/v1 \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
+  -d '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"request-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
 ```
 
-JSON-RPC 0.3 使用 `/a2a/legacy` 和旧版 text part：
+JSON-RPC 0.3 使用 `/a2a/legacy`、`message/send` 和旧版 text part：
 
 ```json
-{"role":"user","parts":[{"type":"text","text":"hello"}]}
+{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"request-1","role":"user","parts":[{"kind":"text","text":"hello"}]}}}
 ```
 
-HTTP+JSON 1.0 直接向 `/rest` 提交消息：
+HTTP+JSON 1.0 在卡片中公布 `/rest` 基址，实际向 `/rest/message:send` 提交消息：
 
-```json
-{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}
+```bash
+curl -sS http://127.0.0.1:<业务端口>/rest/message:send \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"messageId":"request-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}'
 ```
+
+两个 1.0 绑定都返回 `SendMessageResponse`，内容为 `{"message": {...}}`，分别放在
+JSON-RPC `result` 和 REST 响应体中；内部 1.0 Message 不含 `kind` 字段。
+0.3 直接返回带 `kind=message` 的 Message，text part 使用 `kind=text`。
+`/rest` 和 `/rest/v1/message:send` 继续保留为兼容别名。
 
 给 `--no-serve` 可以保留“注册外部已运行 Agent”的用法；该模式不会绑定或提供这三个
 接口，卡片按原文件内容注册。

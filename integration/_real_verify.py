@@ -1103,8 +1103,12 @@ def run_scenario(name, address, service_token, namespace, env):
             "jsonrpc_v1": {
                 "jsonrpc": "2.0",
                 "id": "v1",
-                "method": "message/send",
-                "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "v1"}]}},
+                "method": "SendMessage",
+                "params": {"message": {
+                    "messageId": "v1-request",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "v1"}],
+                }},
             },
             "jsonrpc_v03": {
                 "jsonrpc": "2.0",
@@ -1112,13 +1116,19 @@ def run_scenario(name, address, service_token, namespace, env):
                 "method": "message/send",
                 "params": {
                     "message": {
+                        "kind": "message",
+                        "messageId": "v03-request",
                         "role": "user",
-                        "parts": [{"type": "text", "text": "v03"}],
+                        "parts": [{"kind": "text", "text": "v03"}],
                     },
                 },
             },
             "http_json_v1": {
-                "message": {"role": "ROLE_USER", "parts": [{"text": "rest"}]},
+                "message": {
+                    "messageId": "rest-request",
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "rest"}],
+                },
             },
         }
         expected_text = {
@@ -1127,11 +1137,46 @@ def run_scenario(name, address, service_token, namespace, env):
             "http_json_v1": "A2A 1.0 HTTP+JSON echo: rest",
         }
         for interface, payload in calls.items():
-            status, body = post_json(endpoints[interface], payload)
+            url = endpoints[interface]
+            if interface == "http_json_v1":
+                url = f"{url.rstrip('/')}/message:send"
+            status, body = post_json(url, payload)
             if status != 200:
                 raise AssertionError(f"A2A {interface} returned HTTP {status}: {body}")
-            response = body.get("result", body)
-            text = response.get("parts", [{}])[0].get("text")
+            if interface != "http_json_v1" and (
+                body.get("jsonrpc") != "2.0"
+                or body.get("id") != payload["id"]
+                or "error" in body
+            ):
+                raise AssertionError(f"A2A {interface} returned unexpected JSON-RPC response: {body}")
+            response = body.get("result") if interface != "http_json_v1" else body
+            if interface == "jsonrpc_v03":
+                message = response
+                if not isinstance(message, dict) or (
+                    message.get("kind") != "message" or message.get("role") != "agent"
+                ):
+                    raise AssertionError(f"A2A {interface} returned unexpected legacy Message: {body}")
+            else:
+                if not isinstance(response, dict) or set(response) != {"message"}:
+                    raise AssertionError(f"A2A {interface} returned unexpected SendMessageResponse: {body}")
+                message = response["message"]
+                if not isinstance(message, dict) or (
+                    "kind" in message
+                    or message.get("role") != "ROLE_AGENT"
+                    or not message.get("contextId")
+                ):
+                    raise AssertionError(f"A2A {interface} returned unexpected 1.0 Message: {body}")
+            parts = message.get("parts")
+            if not message.get("messageId") or not isinstance(parts, list) or not parts:
+                raise AssertionError(f"A2A {interface} returned incomplete Message: {body}")
+            part = parts[0]
+            if not isinstance(part, dict) or (
+                interface == "jsonrpc_v03" and part.get("kind") != "text"
+            ) or (
+                interface != "jsonrpc_v03" and ("kind" in part or "type" in part)
+            ):
+                raise AssertionError(f"A2A {interface} returned unexpected text part: {body}")
+            text = part.get("text")
             if text != expected_text[interface]:
                 raise AssertionError(
                     f"A2A {interface} returned unexpected message: {body}")

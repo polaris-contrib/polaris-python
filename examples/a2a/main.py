@@ -131,31 +131,33 @@ def message_text(message):
 
 
 def message_response(message, *, schema_version, transport):
-    """Return a deterministic echo message for one protocol flavor."""
+    """Return a legacy Message or a 1.0 SendMessageResponse."""
     text = message_text(message)
     context_id = message.get("contextId") or message.get("context_id")
     task_id = message.get("taskId") or message.get("task_id")
     if schema_version == "0.3":
         result = {
+            "kind": "message",
             "role": "agent",
             "parts": [{
-                "type": "text",
+                "kind": "text",
                 "text": f"A2A 0.3 JSONRPC echo: {text}",
             }],
             "messageId": str(uuid.uuid4()),
         }
     else:
         result = {
-            "kind": "message",
             "role": "ROLE_AGENT",
             "parts": [{"text": f"A2A {schema_version} {transport} echo: {text}"}],
             "messageId": str(uuid.uuid4()),
         }
     if context_id:
         result["contextId"] = context_id
+    elif schema_version == "1.0":
+        result["contextId"] = str(uuid.uuid4())
     if task_id:
         result["taskId"] = task_id
-    return result
+    return result if schema_version == "0.3" else {"message": result}
 
 
 def jsonrpc_error(request_id, code, message):
@@ -167,7 +169,7 @@ def jsonrpc_error(request_id, code, message):
 
 
 async def handle_jsonrpc(request, *, schema_version):
-    """Handle the message/send method for JSON-RPC 1.0 and 0.3 clients."""
+    """Dispatch the message method declared by each A2A protocol version."""
     try:
         body = await request.json()
     except (ValueError, TypeError):
@@ -176,7 +178,8 @@ async def handle_jsonrpc(request, *, schema_version):
             status=400,
             content_type=A2A_CONTENT_TYPE,
         )
-    if body.get("jsonrpc") != "2.0" or body.get("method") != "message/send":
+    method = "SendMessage" if schema_version == "1.0" else "message/send"
+    if body.get("jsonrpc") != "2.0" or body.get("method") != method:
         return web.json_response(
             jsonrpc_error(body.get("id"), -32601, "Method not found"),
             content_type=A2A_CONTENT_TYPE,
@@ -252,6 +255,7 @@ async def start_a2a_server(host, port):
     app.router.add_post(A2A_V1_PATH, handle_jsonrpc_v1)
     app.router.add_post(A2A_LEGACY_PATH, handle_jsonrpc_legacy)
     app.router.add_post(A2A_REST_PATH, handle_rest)
+    app.router.add_post(f"{A2A_REST_PATH}/message:send", handle_rest)
     app.router.add_post(f"{A2A_REST_PATH}/v1/message:send", handle_rest)
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()

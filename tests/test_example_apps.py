@@ -486,9 +486,12 @@ def test_a2a_example_serves_jsonrpc_and_rest_interfaces():
                     json={
                         "jsonrpc": "2.0",
                         "id": "v1",
-                        "method": "message/send",
+                        "method": "SendMessage",
                         "params": {
                             "message": {
+                                "messageId": "modern-request",
+                                "contextId": "modern-context",
+                                "taskId": "modern-task",
                                 "role": "ROLE_USER",
                                 "parts": [{"text": "modern"}],
                             },
@@ -496,8 +499,16 @@ def test_a2a_example_serves_jsonrpc_and_rest_interfaces():
                     },
                 )
                 assert response.status == 200
-                modern = (await response.json(content_type=None))["result"]
+                modern_response = await response.json(content_type=None)
+                assert modern_response["jsonrpc"] == "2.0"
+                assert modern_response["id"] == "v1"
+                assert set(modern_response["result"]) == {"message"}
+                modern = modern_response["result"]["message"]
+                assert "kind" not in modern
                 assert modern["role"] == "ROLE_AGENT"
+                assert modern["messageId"]
+                assert modern["contextId"] == "modern-context"
+                assert modern["taskId"] == "modern-task"
                 assert modern["parts"][0]["text"] == (
                     "A2A 1.0 JSONRPC echo: modern")
 
@@ -509,32 +520,61 @@ def test_a2a_example_serves_jsonrpc_and_rest_interfaces():
                         "method": "message/send",
                         "params": {
                             "message": {
+                                "kind": "message",
+                                "messageId": "legacy-request",
                                 "role": "user",
-                                "parts": [{"type": "text", "text": "old"}],
+                                "parts": [{"kind": "text", "text": "old"}],
                             },
                         },
                     },
                 )
                 assert response.status == 200
                 legacy = (await response.json(content_type=None))["result"]
+                assert legacy["kind"] == "message"
                 assert legacy["role"] == "agent"
+                assert legacy["messageId"]
+                assert legacy["parts"][0]["kind"] == "text"
                 assert legacy["parts"][0]["text"] == (
                     "A2A 0.3 JSONRPC echo: old")
 
-                response = await client.post(
-                    f"http://127.0.0.1:{port}/rest",
-                    json={
-                        "message": {
-                            "role": "ROLE_USER",
-                            "parts": [{"text": "rest"}],
-                        },
-                    },
+                rest_base = next(
+                    item["url"] for item in discovered["supportedInterfaces"]
+                    if item["protocolBinding"] == "HTTP+JSON"
                 )
-                assert response.status == 200
-                rest = await response.json(content_type=None)
-                assert rest["kind"] == "message"
-                assert rest["parts"][0]["text"] == (
-                    "A2A 1.0 HTTP+JSON echo: rest")
+                for path in ("/message:send", "", "/v1/message:send"):
+                    response = await client.post(
+                        f"{rest_base}{path}",
+                        json={
+                            "message": {
+                                "messageId": "rest-request",
+                                "role": "ROLE_USER",
+                                "parts": [{"text": "rest"}],
+                            },
+                        },
+                    )
+                    assert response.status == 200
+                    rest_response = await response.json(content_type=None)
+                    assert set(rest_response) == {"message"}
+                    rest = rest_response["message"]
+                    assert "kind" not in rest
+                    assert rest["role"] == "ROLE_AGENT"
+                    assert rest["messageId"]
+                    assert rest["contextId"]
+                    assert rest["parts"] == [{
+                        "text": "A2A 1.0 HTTP+JSON echo: rest",
+                    }]
+
+                for path, method in (
+                    ("/a2a/v1", "message/send"),
+                    ("/a2a/legacy", "SendMessage"),
+                ):
+                    response = await client.post(
+                        f"http://127.0.0.1:{port}{path}",
+                        json={"jsonrpc": "2.0", "id": "wrong-version", "method": method},
+                    )
+                    rejected = await response.json(content_type=None)
+                    assert rejected["id"] == "wrong-version"
+                    assert rejected["error"]["code"] == -32601
         finally:
             await runner.cleanup()
 

@@ -23,9 +23,9 @@
 | --- | --- |
 | demo → ProviderAPI | 注册普通 Instance，`version` 取 AgentCard version，metadata 只写 `ai-agent-name`、`ai-agent-card`、`ai-a2a-version`。 |
 | 验证器 → ConsumerAPI | 发现实例并比对 instance ID、Host、Port、Version、metadata 和 AgentCard 内容。 |
-| A2A 客户端 → `/a2a/v1` | 发送 1.0 JSON-RPC `message/send`，返回 `ROLE_AGENT` echo message。 |
+| A2A 客户端 → `/a2a/v1` | 发送 1.0 JSON-RPC `SendMessage`，`result.message` 返回 `ROLE_AGENT` echo Message，不含 `kind`。 |
 | A2A 客户端 → `/a2a/legacy` | 发送 0.3 JSON-RPC `message/send`，返回 legacy `agent` echo message。 |
-| A2A 客户端 → `/rest` | 发送 1.0 HTTP+JSON message body，返回直接 Message 对象。 |
+| A2A 客户端 → `/rest/message:send` | 从 `/rest` 基址追加标准路由，发送 1.0 HTTP+JSON 请求，返回 `{"message": {...}}` 的 SendMessageResponse。 |
 | 验证器 → AgentCard endpoint | 从 `/.well-known/agent-card.json` 读取最终卡片，确认三个接口共享同一 host/port。 |
 
 ## 脚本作用
@@ -48,6 +48,9 @@ metadata key 集合严格为 `ai-agent-name`、`ai-agent-card`、`ai-a2a-version
 
 公开示例的 endpoint 测试启动真实 aiohttp listener，分别执行三个 Message 请求；
 这里验证的是同一 IP、同一业务端口下的多 path/多 transport，不启动外部 Agent 框架。
+1.0 使用 `SendMessage` 和 `SendMessageResponse`；0.3 使用 `message/send`、
+`kind=message` 和 `kind=text`。同时断言两个 JSON-RPC endpoint 拒绝另一版本的方法名，
+并覆盖 REST 标准路由与两个兼容别名。
 
 断言覆盖：
 
@@ -81,8 +84,9 @@ A2A SDK 或额外治理规则拉取。
 这三个 URL 后注册；离线 fixture 仍只验证卡片和实例映射。
 注册中心使用 offline:8091 的 RPC 替身，不向该地址建立真实连接。
 示例注册的是普通 Instance，不向 SDK 增加服务专用模型。
-服务 token 为测试值 `token`。示例没有 `--host`、`--port` 或 `--service`：
-注册身份完全由卡片和 `--registration-port` 决定。
+服务 token 为测试值 `token`。离线 fixture 没有 `--host`、`--port` 或 `--service`，
+注册身份完全由卡片和 `--registration-port` 决定；公开示例使用 `--host` 和 `--port`
+确定业务监听地址，再据此生成卡片。
 
 ## 执行产物与解读
 
@@ -121,8 +125,11 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 3. 从注册中心发现实例，校验必需的三个业务 metadata key；允许注册中心追加
    `region/zone/campus/version`，Host/Port/Version/Protocol、AgentCard 原样内容
    和接口 endpoint 仍必须匹配。
-4. 分别 POST `/a2a/v1`、`/a2a/legacy` 和 `/rest`，断言每种绑定都返回对应版本的
-   echo message。
+4. 分别 POST `/a2a/v1` 的 `SendMessage`、`/a2a/legacy` 的 `message/send` 和
+   `/rest/message:send` 的 HTTP+JSON 请求。断言两个 1.0 绑定返回
+   `SendMessageResponse.message`，内部 Message 不含 `kind`；0.3 返回直接 Message，
+   包含 `kind=message` 和 `kind=text`。每个响应都要有 messageId 和预期 echo 文本，
+   1.0 响应还需包含 contextId。
 5. 验证成功后 `--keep-running` 让进程持续心跳和提供接口，保留实例直到 cleanup。
 
 通过条件是最后一行 JSON 的 `transport` 为 `JSONRPC`、`a2a_version` 为 `1.0`、

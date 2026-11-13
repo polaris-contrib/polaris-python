@@ -9,9 +9,9 @@ callable interfaces:
 
 | Interface | Path | Message binding |
 | --- | --- | --- |
-| A2A JSON-RPC 1.0 | `/a2a/v1` | `message/send` |
+| A2A JSON-RPC 1.0 | `/a2a/v1` | `SendMessage` |
 | A2A JSON-RPC 0.3 | `/a2a/legacy` | `message/send` |
-| A2A HTTP+JSON 1.0 | `/rest` | message-send JSON body |
+| A2A HTTP+JSON 1.0 | `/rest` (base URL) | POST `/rest/message:send` |
 
 All three interfaces use the same IP and listening port, proving that multiple
 transports remain in one AgentCard and produce one Polaris instance. The card is
@@ -37,20 +37,29 @@ Invoke the JSON-RPC 1.0 interface:
 ```bash
 curl -sS http://127.0.0.1:<业务端口>/a2a/v1 \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
+  -d '{"jsonrpc":"2.0","id":"1","method":"SendMessage","params":{"message":{"messageId":"request-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
 ```
 
-JSON-RPC 0.3 uses the same method at `/a2a/legacy`, with legacy text parts:
+JSON-RPC 0.3 uses `message/send` at `/a2a/legacy`, with legacy text parts:
 
 ```json
-{"role":"user","parts":[{"type":"text","text":"hello"}]}
+{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"request-1","role":"user","parts":[{"kind":"text","text":"hello"}]}}}
 ```
 
-HTTP+JSON 1.0 accepts the message directly at `/rest`:
+HTTP+JSON 1.0 publishes `/rest` as its base URL. Send messages to
+`/rest/message:send`:
 
-```json
-{"message":{"role":"ROLE_USER","parts":[{"text":"hello"}]}}
+```bash
+curl -sS http://127.0.0.1:<业务端口>/rest/message:send \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"messageId":"request-1","role":"ROLE_USER","parts":[{"text":"hello"}]}}'
 ```
+
+Both 1.0 bindings return a `SendMessageResponse` containing `{"message": {...}}`,
+inside JSON-RPC `result` or directly in the REST response body. The inner 1.0
+Message has no `kind` field. The 0.3 binding returns a direct Message with
+`kind=message` and `kind=text` parts. `/rest` and `/rest/v1/message:send` remain
+available as aliases.
 
 Use `--no-serve` to register an already-running external Agent. In that mode the
 card is used as-is and the example does not bind or serve the three interfaces.
