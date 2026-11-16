@@ -87,3 +87,20 @@ POLARIS_SERVER_ADDRESS=127.0.0.1:8091 ./integration/verify_e2e.sh --only quickst
 ```
 
 Test assertions, process retention, and test cleanup belong to `integration/`.
+
+## Cloud Verification
+
+See [integration/cloud/README.md](../integration/cloud/README.md) for the complete
+package-run-pack-import workflow.
+
+```bash
+# Local deployment package
+./examples/cloud-package.sh
+
+# On the extracted cloud package
+./run-e2e.sh --server <host>:8091
+./pack-logs.sh --all
+
+# Import returned logs locally
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+```

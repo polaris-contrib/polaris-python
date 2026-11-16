@@ -41,12 +41,19 @@ from integration._real_verify import (
     resolve_skill_namespace,
     scenario_environment,
     service_name,
+    timestamp_value,
 )
 from integration._support import configure_e2e_event_reporting, get_local_host
 from integration import _support as support
 from polaris import Configuration
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def test_timestamp_value_uses_millisecond_precision():
+    assert timestamp_value(datetime(2026, 11, 16, 17, 30, 45, 123456)) == (
+        "20261116173045123"
+    )
 
 
 def test_real_service_name_uses_demo_path_provider_role_and_timestamp():
@@ -294,6 +301,7 @@ def test_real_a2a_verification_uses_standard_bindings_and_rejects_invalid_respon
     result = {
         "instance_id": "registered-instance",
         "transport": "JSONRPC",
+        "version": "20261116173045123",
         "port": 1,
         "protocol": "",
         "a2a_version": "1.0",
@@ -342,6 +350,7 @@ def test_real_a2a_verification_uses_standard_bindings_and_rejects_invalid_respon
         return 200, response
 
     monkeypatch.setattr(real, "get_local_host", lambda _address: "127.0.0.1")
+    monkeypatch.setattr(real, "timestamp_value", lambda: "20261116173045123")
     monkeypatch.setattr(real, "assert_instance_host", lambda *_args: None)
     monkeypatch.setattr(real, "start_demo", lambda *_args, **_kwargs: (
         SimpleNamespace(poll=lambda: None), result,
@@ -356,6 +365,10 @@ def test_real_a2a_verification_uses_standard_bindings_and_rejects_invalid_respon
         verified = real.run_scenario("a2a", "registry:8091", "", "ns", env)
         assert verified["interfaces"] == sorted(endpoints)
         assert calls == ["jsonrpc_v1", "jsonrpc_v03", "http_json_v1"]
+    card = json.loads(
+        (tmp_path / "work" / "a2a-agent-card.json").read_text(encoding="utf-8")
+    )
+    assert card["version"] == "20261116173045123"
 
 
 def test_real_verification_startup_budget_covers_api_timeout_and_outer_budget():

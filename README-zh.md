@@ -182,6 +182,15 @@ make -C examples cleanup ARGS='--only quickstart'
 测试步骤与产物说明见 [集成测试说明](integration/README-zh.md) 和
 [quickstart 测试](integration/scenarios/quickstart/test.md)。
 
+云端真实 E2E 支持本地构建部署包、云端运行、云端打包日志及本地导入分析：
+
+```bash
+./examples/cloud-package.sh
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+```
+
+完整流程见 [云端验证说明](integration/cloud/README-zh.md)。
+
 ## 许可证
 
 [BSD 3-Clause](LICENSE)

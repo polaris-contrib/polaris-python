@@ -16,6 +16,10 @@
 # 真实注册中心验证
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 ./integration/verify_e2e.sh --only lossless
 
+# 云端部署包与日志回传
+./integration/cloud/build-package.sh
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+
 # 查看与清理
 ./integration/logs.sh --latest --tail 50
 ./integration/cleanup.sh --dry-run
@@ -32,6 +36,7 @@ POLARIS_SERVER_ADDRESS=127.0.0.1:8091 ./integration/verify_e2e.sh --only lossles
 integration/
 ├── scenarios/        离线验证器和场景文档
 ├── fixtures/         复杂测试专用应用和配置
+├── cloud/            本地部署打包、云端运行、日志回传和结果导入
 ├── _support.py       测试传输与运行时配置
 ├── _real_verify.py   真实服务断言
 ├── _manage.py        场景选择与进程托管
@@ -45,3 +50,4 @@ integration/
 ```
 
 场景覆盖、环境变量、产物结构和清理范围见 [test.md](test.md)。
+云端部署与日志回传流程见 [cloud/README-zh.md](cloud/README-zh.md)。

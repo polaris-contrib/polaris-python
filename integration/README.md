@@ -17,6 +17,10 @@ remain small capability demos; complex test-only applications live in
 # Real registry verification
 POLARIS_SERVER_ADDRESS=127.0.0.1:8091 ./integration/verify_e2e.sh --only lossless
 
+# Cloud deployment package and returned-log import
+./integration/cloud/build-package.sh
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+
 # Inspect and clean retained resources
 ./integration/logs.sh --latest --tail 50
 ./integration/cleanup.sh --dry-run
@@ -33,6 +37,7 @@ resources recorded under `integration/`.
 integration/
 ├── scenarios/        offline verifiers and scenario documentation
 ├── fixtures/         complex test-only applications and configuration
+├── cloud/            local packaging, cloud execution and log import
 ├── _support.py       test transport and runtime configuration
 ├── _real_verify.py   real-service assertions
 ├── _manage.py        scenario selection and process supervision
@@ -47,3 +52,4 @@ integration/
 
 See [test.md](test.md) for scenario coverage, environment variables, artifact
 semantics, retention, and cleanup.
+See [cloud/README.md](cloud/README.md) for cloud packaging and log transfer.

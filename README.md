@@ -189,6 +189,16 @@ Verification and test artifacts belong to `integration/`:
 See the [integration guide](integration/README.md) and
 [quickstart tests](integration/scenarios/quickstart/test.md) for checks and test artifacts.
 
+Cloud E2E supports local deployment packaging, cloud execution, cloud log
+archiving, and local result import:
+
+```bash
+./examples/cloud-package.sh
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+```
+
+See [cloud verification](integration/cloud/README.md) for the complete workflow.
+
 ## License
 
 [BSD 3-Clause](LICENSE)

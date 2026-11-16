@@ -41,6 +41,26 @@
 - `logs.sh`：查看最近或指定分类日志。
 - `cleanup.sh`：停止已记录进程并清理 integration 运行产物。
 - `verify_e2e.sh`：连接真实 Polaris，需显式环境变量。
+- `cloud/build-package.sh`：本地构建云端部署包。
+
+## 云端验证包
+
+完整流程为：
+
+```bash
+# 本地
+./integration/cloud/build-package.sh
+
+# 云端解压部署包后
+./run-e2e.sh --server <host>:8091
+./pack-logs.sh --all
+
+# 本地导入返回包
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+```
+
+默认包携带 Linux x86_64、Python 3.12 依赖运行时。脚本、包内容和安全限制见
+[cloud/README-zh.md](cloud/README-zh.md)。
 
 ## 离线验证
 

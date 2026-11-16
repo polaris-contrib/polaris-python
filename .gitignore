@@ -47,6 +47,9 @@ examples/**/x86-bin
 integration/.logs/
 integration/.runtime/
 integration/**/.build/
+integration/cloud/dist/
+integration/cloud/.build/
+cloud-runs/
 polaris.log
 polaris-*.log
 /polaris

@@ -118,10 +118,12 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 步骤：
 
 1. 验证器在运行目录生成卡片模板。服务名使用上面的唯一值，接口 IP 为本机到
-   Polaris 的路由源 IP。
+   Polaris 的路由源 IP。`AgentCard.version` 使用本次执行时刻生成的 17 位
+   毫秒时间戳，例如 `20261116173045123`。
 2. `main.py` 在 `--host <源 IP> --port 0` 上启动真实 Provider，把实际业务端口写入
    三个 interface URL，然后以 `service=AgentCard.name`、共享 IP、
    `registration_port=1`、`version=AgentCard.version` 和空 protocol 注册一个普通实例。
+   注册实例的 `version` 必须与 AgentCard 中的 17 位时间戳完全一致。
 3. 从注册中心发现实例，校验必需的三个业务 metadata key；允许注册中心追加
    `region/zone/campus/version`，Host/Port/Version/Protocol、AgentCard 原样内容
    和接口 endpoint 仍必须匹配。
@@ -133,7 +135,8 @@ export POLARIS_TOKEN=<sdk-token>   # 注册中心要求接入鉴权时才需要
 5. 验证成功后 `--keep-running` 让进程持续心跳和提供接口，保留实例直到 cleanup。
 
 通过条件是最后一行 JSON 的 `transport` 为 `JSONRPC`、`a2a_version` 为 `1.0`、
-`port` 为 `1`、`protocol` 为空、`instances` 为 1，`endpoint` 等于卡片第一个接口，
+`version` 是本次生成的 17 位时间戳、`port` 为 `1`、`protocol` 为空、
+`instances` 为 1，`endpoint` 等于卡片第一个接口，
 且 `host` 等于本机到 Polaris 的路由源 IP；`endpoints` 必须完整包含三个接口，
 三个 HTTP 调用都返回 200 和预期版本标识。
 离线验证里“等待 5.2 秒确认至少一次心跳、反注册后替身为空”不在这一路重复。

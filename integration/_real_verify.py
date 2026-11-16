@@ -123,6 +123,12 @@ def e2e_namespace():
     return resolve_e2e_namespace()
 
 
+def timestamp_value(now=None):
+    """Return the 17-digit millisecond timestamp used by one E2E run."""
+    now = now or datetime.now()
+    return now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond // 1000:03d}"
+
+
 def service_name(scenario, role="provider"):
     """Build a scenario service name with an explicit caller/callee/provider role."""
     if role not in E2E_SERVICE_ROLES:
@@ -131,9 +137,7 @@ def service_name(scenario, role="provider"):
             f"choose from {', '.join(E2E_SERVICE_ROLES)}"
         )
     label = scenario.strip("/").replace("/", "-") or "scenario"
-    now = datetime.now()
-    stamp = now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond // 1000:03d}"
-    return f"{label}-{role}-{stamp}"
+    return f"{label}-{role}-{timestamp_value()}"
 
 
 def scenario_timeout(env):
@@ -1042,12 +1046,13 @@ def run_scenario(name, address, service_token, namespace, env):
         }
     if name == "a2a":
         service = service_name(name)
+        agent_version = timestamp_value()
         host = get_local_host(address)
         authority = f"[{host}]" if ":" in host else host
         card = {
             "name": service,
             "description": "Polaris Python A2A integration fixture",
-            "version": "1.0.0",
+            "version": agent_version,
             "supportedInterfaces": [
                 {
                     "url": f"http://{authority}:8080/a2a/v1",
@@ -1085,6 +1090,11 @@ def run_scenario(name, address, service_token, namespace, env):
         ], env, "instance_id", timeout=90)
         if result.get("transport") != "JSONRPC":
             raise AssertionError("A2A metadata discovery failed")
+        if result.get("version") != agent_version:
+            raise AssertionError(
+                "A2A instance version does not match the timestamped "
+                "AgentCard version"
+            )
         if result.get("port") != 1 or result.get("protocol") != "":
             raise AssertionError("A2A instance identity does not match registration_port/default protocol")
         expected_endpoint = result.get("endpoint")

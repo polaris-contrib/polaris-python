@@ -1,4 +1,4 @@
-.PHONY: verify offline e2e logs cleanup
+.PHONY: verify offline e2e logs cleanup cloud-package cloud-import-logs
 
 verify offline:
 	./verify.sh $(ARGS)
@@ -11,3 +11,9 @@ logs:
 
 cleanup:
 	./cleanup.sh $(ARGS)
+
+cloud-package:
+	./cloud/build-package.sh $(ARGS)
+
+cloud-import-logs:
+	./cloud/import-logs.sh $(ARGS)

@@ -80,3 +80,20 @@ POLARIS_SERVER_ADDRESS=127.0.0.1:8091 ./integration/verify_e2e.sh --only quickst
 ```
 
 测试断言、测试进程保留和测试资源清理均由 `integration/` 负责。
+
+## 云端验证
+
+本地打包、云端运行、云端日志打包以及日志回传的详细流程见
+[integration/cloud/README-zh.md](../integration/cloud/README-zh.md)。
+
+```bash
+# 本地构建部署包
+./examples/cloud-package.sh
+
+# 云端解压部署包后
+./run-e2e.sh --server <host>:8091
+./pack-logs.sh --all
+
+# 本地导入云端日志包
+./integration/cloud/import-logs.sh <returned-logs.tar.gz>
+```
